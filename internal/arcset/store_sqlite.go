@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/kaichao/gopkg/errors"
 	"github.com/sirupsen/logrus"
@@ -23,8 +24,8 @@ func (s *SQLiteStore) Create(ctx context.Context, a *Arcset) error {
 		`INSERT INTO t_arcset (name, path_regex, label, create_time, rait_type, metadata, status,
 		 unit_bytes, segment_bytes, backend, sum_bytes, net_bytes, compress_algo, last_check, comment)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.PathRegex, a.Label, a.CreateTime, a.RaitType, string(metadataJSON), a.Status,
-		a.UnitBytes, a.SegmentBytes, a.Backend, a.SumBytes, a.NetBytes, a.CompressAlgo, a.LastCheck, a.Comment)
+		a.Name, a.PathRegex, nullStr(a.Label), a.CreateTime, nullStr(a.RaitType), string(metadataJSON), nullStr(a.Status),
+		a.UnitBytes, a.SegmentBytes, a.Backend, nullInt(a.SumBytes), nullInt(a.NetBytes), nullStr(a.CompressAlgo), nullTime(a.LastCheck), nullStr(a.Comment))
 	if err != nil {
 		return errors.WrapE(err, "create arcset", "name", a.Name)
 	}
@@ -32,6 +33,10 @@ func (s *SQLiteStore) Create(ctx context.Context, a *Arcset) error {
 	a.ID = int(id)
 	return nil
 }
+
+func nullStr(s string) any { if s == "" { return nil }; return s }
+func nullInt(n int64) any { if n == 0 { return nil }; return n }
+func nullTime(t time.Time) any { if t.IsZero() { return nil }; return t }
 
 func (s *SQLiteStore) FindByID(ctx context.Context, id int) (*Arcset, error) {
 	query := `SELECT id, name, path_regex, label, create_time, rait_type, metadata, status,
@@ -176,14 +181,42 @@ func (s *SQLiteStore) ListArcsetFiles(ctx context.Context, arcsetID int) ([]File
 
 func (s *SQLiteStore) scanOne(row *sql.Row) (*Arcset, error) {
 	a := &Arcset{}
-	var metadata []byte
-	err := row.Scan(&a.ID, &a.Name, &a.PathRegex, &a.Label, &a.CreateTime, &a.RaitType, &metadata, &a.Status,
-		&a.UnitBytes, &a.SegmentBytes, &a.Backend, &a.SumBytes, &a.NetBytes, &a.CompressAlgo, &a.LastCheck, &a.Comment)
+	var (
+		label, raitType, status, compressAlgo, comment sql.NullString
+		createTime, lastCheck                            sql.NullTime
+		unitBytes, segmentBytes, sumBytes, netBytes      sql.NullInt64
+		metadata                                         []byte
+	)
+	err := row.Scan(&a.ID, &a.Name, &a.PathRegex, &label, &createTime, &raitType, &metadata, &status,
+		&unitBytes, &segmentBytes, &a.Backend, &sumBytes, &netBytes, &compressAlgo, &lastCheck, &comment)
 	if err == sql.ErrNoRows {
 		return nil, errors.E("arcset not found")
 	}
 	if err != nil {
 		return nil, errors.WrapE(err, "scan arcset row")
+	}
+	a.Label = label.String
+	a.RaitType = raitType.String
+	a.Status = status.String
+	a.CompressAlgo = compressAlgo.String
+	a.Comment = comment.String
+	if createTime.Valid {
+		a.CreateTime = createTime.Time
+	}
+	if lastCheck.Valid {
+		a.LastCheck = lastCheck.Time
+	}
+	if unitBytes.Valid {
+		a.UnitBytes = unitBytes.Int64
+	}
+	if segmentBytes.Valid {
+		a.SegmentBytes = segmentBytes.Int64
+	}
+	if sumBytes.Valid {
+		a.SumBytes = sumBytes.Int64
+	}
+	if netBytes.Valid {
+		a.NetBytes = netBytes.Int64
 	}
 	a.Metadata = make(map[string]any)
 	if len(metadata) > 0 {
@@ -196,10 +229,38 @@ func (s *SQLiteStore) scanOne(row *sql.Row) (*Arcset, error) {
 
 func (s *SQLiteStore) scanRow(rows *sql.Rows) (*Arcset, error) {
 	a := &Arcset{}
-	var metadata []byte
-	if err := rows.Scan(&a.ID, &a.Name, &a.PathRegex, &a.Label, &a.CreateTime, &a.RaitType, &metadata, &a.Status,
-		&a.UnitBytes, &a.SegmentBytes, &a.Backend, &a.SumBytes, &a.NetBytes, &a.CompressAlgo, &a.LastCheck, &a.Comment); err != nil {
+	var (
+		label, raitType, status, compressAlgo, comment sql.NullString
+		createTime, lastCheck                            sql.NullTime
+		unitBytes, segmentBytes, sumBytes, netBytes      sql.NullInt64
+		metadata                                         []byte
+	)
+	if err := rows.Scan(&a.ID, &a.Name, &a.PathRegex, &label, &createTime, &raitType, &metadata, &status,
+		&unitBytes, &segmentBytes, &a.Backend, &sumBytes, &netBytes, &compressAlgo, &lastCheck, &comment); err != nil {
 		return nil, errors.WrapE(err, "scan arcset row")
+	}
+	a.Label = label.String
+	a.RaitType = raitType.String
+	a.Status = status.String
+	a.CompressAlgo = compressAlgo.String
+	a.Comment = comment.String
+	if createTime.Valid {
+		a.CreateTime = createTime.Time
+	}
+	if lastCheck.Valid {
+		a.LastCheck = lastCheck.Time
+	}
+	if unitBytes.Valid {
+		a.UnitBytes = unitBytes.Int64
+	}
+	if segmentBytes.Valid {
+		a.SegmentBytes = segmentBytes.Int64
+	}
+	if sumBytes.Valid {
+		a.SumBytes = sumBytes.Int64
+	}
+	if netBytes.Valid {
+		a.NetBytes = netBytes.Int64
 	}
 	a.Metadata = make(map[string]any)
 	if len(metadata) > 0 {

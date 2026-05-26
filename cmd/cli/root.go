@@ -88,5 +88,4 @@ func init() {
 
 func init() {
 	// rootCmd.PersistentFlags().StringVarP(&envFile, "env-file", "e", "", "Environment variables file")
-
 }
