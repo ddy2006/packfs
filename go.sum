@@ -5,10 +5,6 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/kaichao/gopkg v0.0.0-20260512020252-8da80054f979 h1:8+HpCDYNdPWaCfK9t0Qo/tl9C7YjtgE/ngSFF1em5iU=
 github.com/kaichao/gopkg v0.0.0-20260512020252-8da80054f979/go.mod h1:ArwigN80juK+cn5qAueJpgpcnWK4SOauE1etpm+AAI4=
-github.com/kaichao/scalebox v0.0.0-20260228140309-881991c9b3be h1:gvG9d1h0Vbr/HYAgS8b1SF0NFRAPpv72PrH3l80EU70=
-github.com/kaichao/scalebox v0.0.0-20260228140309-881991c9b3be/go.mod h1:UJIwu3vuWudbldUqImPUVE6Wz4QFWQRhWVaXfTj/iYY=
-github.com/kaichao/scalebox v0.0.0-20260512022448-81481db79880 h1:hmE+0WkvGlFpM5lqd/SAapu8ksP8eAbLfggDI68g6lQ=
-github.com/kaichao/scalebox v0.0.0-20260512022448-81481db79880/go.mod h1:lUyEw+Na9L9Upn2vQVsTmyzrs7qg5ReXfADa1tXeCv8=
 github.com/mattn/go-sqlite3 v1.14.34 h1:3NtcvcUnFBPsuRcno8pUtupspG/GM+9nZ88zgJcp6Zk=
 github.com/mattn/go-sqlite3 v1.14.34/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
