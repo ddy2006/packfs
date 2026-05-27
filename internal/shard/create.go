@@ -30,12 +30,13 @@ func CreateShard(
 		return errors.E("no segments to pack")
 	}
 
-	shardFileName := fmt.Sprintf("shard_%d_%04d.pak", arcsetID, seq)
-	shardPath := filepath.Join(outputDir, shardFileName)
+	// file_path 存相对路径，物理文件写入 outputDir 下。
+	shardRelPath := fmt.Sprintf("shard_%d_%04d.pak", arcsetID, seq)
+	shardAbsPath := filepath.Join(outputDir, shardRelPath)
 
-	out, err := os.Create(shardPath)
+	out, err := os.Create(shardAbsPath)
 	if err != nil {
-		return errors.WrapE(err, "create shard file", "path", shardPath)
+		return errors.WrapE(err, "create shard file", "path", shardAbsPath)
 	}
 	defer out.Close()
 
@@ -56,7 +57,7 @@ func CreateShard(
 
 		pendings = append(pendings, pendingSeg{
 			seg: &Segment{
-				ShardPath:    shardPath,
+				ShardPath:    shardRelPath,
 				Offset:       shardSize,
 				Size:         n,
 				Arcset:       arcsetID,
@@ -75,7 +76,7 @@ func CreateShard(
 
 	sh := &Shard{
 		Seq:       seq,
-		FilePath:  shardPath,
+		FilePath:  shardRelPath,
 		FileSize:  shardSize,
 		Type:      shardType,
 		Checksum:  shardChecksum,
@@ -94,7 +95,7 @@ func CreateShard(
 		}
 	}
 
-	logrus.Infof("created shard %s with %d segments (%d bytes)", shardPath, len(descs), shardSize)
+	logrus.Infof("created shard %s with %d segments (%d bytes)", shardAbsPath, len(descs), shardSize)
 	return nil
 }
 

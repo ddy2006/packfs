@@ -24,5 +24,7 @@ type File struct {
 
 // Filter for querying datasets.
 type Filter struct {
+	ID   *int
+	Name *string
 	Limit *int
 }

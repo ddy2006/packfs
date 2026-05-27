@@ -39,6 +39,14 @@ func (s *SQLiteStore) Find(ctx context.Context, filter Filter) ([]*Dataset, erro
 	query := `SELECT id, name, relative_path, label, metadata FROM t_dataset WHERE 1=1`
 	var args []any
 
+	if filter.ID != nil {
+		query += " AND id = ?"
+		args = append(args, *filter.ID)
+	}
+	if filter.Name != nil {
+		query += " AND name LIKE ?"
+		args = append(args, "%"+*filter.Name+"%")
+	}
 	if filter.Limit != nil {
 		query += " ORDER BY name LIMIT ?"
 		args = append(args, *filter.Limit)
