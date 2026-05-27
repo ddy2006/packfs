@@ -27,20 +27,16 @@ func setupDB(t *testing.T) *sql.DB {
 		file_size BIGINT,
 		type VARCHAR,
 		checksum VARCHAR,
-		backend VARCHAR NOT NULL,
 		metadata JSON,
 		last_check DATETIME,
-		arcset INTEGER
+		arcset INTEGER NOT NULL REFERENCES t_arcset(id) ON DELETE CASCADE
 	);
 	CREATE TABLE t_segment (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		shard_path VARCHAR NOT NULL,
 		offset BIGINT,
 		size BIGINT,
 		shard INTEGER NOT NULL REFERENCES t_shard(id) ON DELETE CASCADE,
 		arcset INTEGER NOT NULL,
-		compress_algo VARCHAR NOT NULL,
-		checksum VARCHAR,
 		file INTEGER NOT NULL,
 		file_offset BIGINT,
 		file_size BIGINT
@@ -57,7 +53,6 @@ func TestCreateShard(t *testing.T) {
 	store := shard.NewSQLiteStore(db)
 	ctx := context.Background()
 
-	// Create source files in temp dir.
 	tmpDir := t.TempDir()
 	srcFile := filepath.Join(tmpDir, "a.txt")
 	data := []byte("hello world, this is test data for shard packing")
@@ -70,12 +65,11 @@ func TestCreateShard(t *testing.T) {
 	}
 
 	outputDir := t.TempDir()
-	err := shard.CreateShard(ctx, store, descs, 1, 0, outputDir, "full", "local", "none")
+	err := shard.CreateShard(ctx, store, descs, 1, 0, outputDir, "DATA")
 	if err != nil {
 		t.Fatalf("CreateShard: %v", err)
 	}
 
-	// Verify shard file exists.
 	shardFile := filepath.Join(outputDir, "shard_1_0000.pak")
 	shardData, err := os.ReadFile(shardFile)
 	if err != nil {
@@ -85,7 +79,6 @@ func TestCreateShard(t *testing.T) {
 		t.Errorf("shard content mismatch: got %q, want %q", string(shardData), string(data))
 	}
 
-	// Verify t_shard record.
 	shards, err := store.FindByArcset(ctx, 1)
 	if err != nil {
 		t.Fatalf("FindByArcset: %v", err)
@@ -120,7 +113,7 @@ func TestCreateShardMultipleSegments(t *testing.T) {
 	}
 
 	outputDir := t.TempDir()
-	err := shard.CreateShard(ctx, store, descs, 2, 1, outputDir, "full", "local", "none")
+	err := shard.CreateShard(ctx, store, descs, 2, 1, outputDir, "DATA")
 	if err != nil {
 		t.Fatalf("CreateShard: %v", err)
 	}

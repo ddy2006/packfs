@@ -38,9 +38,9 @@ func listCmd() *cobra.Command {
 			}
 
 			// 表格输出
-			fmt.Println(strings.Join([]string{"ID", "Name", "RelativePath", "Label"}, "\t"))
+			fmt.Println(strings.Join([]string{"ID", "Name", "CurrentPath", "Label"}, "\t"))
 			for _, ds := range datasets {
-				fmt.Printf("%d\t%s\t%s\t%s\n", ds.ID, ds.Name, ds.RelativePath, ds.Label)
+				fmt.Printf("%d\t%s\t%s\t%s\n", ds.ID, ds.Name, ds.CurrentPath, ds.Label)
 			}
 			fmt.Printf("(%d rows)\n", len(datasets))
 			return nil

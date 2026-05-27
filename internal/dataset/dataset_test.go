@@ -22,19 +22,18 @@ func setupDB(t *testing.T) *sql.DB {
 	CREATE TABLE t_dataset (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name VARCHAR,
-		relative_path VARCHAR NOT NULL,
 		label VARCHAR,
-		metadata JSON
+		metadata JSON NOT NULL,
+		current_path VARCHAR,
+		comment TEXT
 	);
 	CREATE TABLE t_file (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		file_path VARCHAR NOT NULL,
 		file_size BIGINT,
 		metadata JSON,
-		ctime DATETIME,
-		mtime DATETIME,
 		checksum TEXT,
-		dataset INTEGER REFERENCES t_dataset(id) ON DELETE SET NULL
+		dataset INTEGER NOT NULL REFERENCES t_dataset(id) ON DELETE CASCADE
 	);
 	`
 	if _, err := db.Exec(schema); err != nil {
@@ -53,9 +52,9 @@ func TestCreateAndFindByName(t *testing.T) {
 	ctx := context.Background()
 
 	ds := &dataset.Dataset{
-		Name:         "test-ds",
-		RelativePath: "/data/test",
-		Label:        "测试数据集",
+		Name:        "test-ds",
+		CurrentPath: "/data/test",
+		Label:       "测试数据集",
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -71,8 +70,8 @@ func TestCreateAndFindByName(t *testing.T) {
 	if got.Name != ds.Name {
 		t.Errorf("Name: got %q, want %q", got.Name, ds.Name)
 	}
-	if got.RelativePath != ds.RelativePath {
-		t.Errorf("RelativePath: got %q, want %q", got.RelativePath, ds.RelativePath)
+	if got.CurrentPath != ds.CurrentPath {
+		t.Errorf("CurrentPath: got %q, want %q", got.CurrentPath, ds.CurrentPath)
 	}
 	if got.Label != ds.Label {
 		t.Errorf("Label: got %q, want %q", got.Label, ds.Label)
@@ -95,8 +94,8 @@ func TestFind(t *testing.T) {
 
 	for _, name := range []string{"b", "a", "c"} {
 		if err := store.Create(ctx, &dataset.Dataset{
-			Name:         name,
-			RelativePath: "/data/" + name,
+			Name:        name,
+			CurrentPath: "/data/" + name,
 		}); err != nil {
 			t.Fatalf("Create %s: %v", name, err)
 		}
@@ -128,8 +127,8 @@ func TestAddFileRecordAndListFiles(t *testing.T) {
 	ctx := context.Background()
 
 	ds := &dataset.Dataset{
-		Name:         "ds1",
-		RelativePath: "/data/ds1",
+		Name:        "ds1",
+		CurrentPath: "/data/ds1",
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -172,15 +171,17 @@ func TestCreateFromDir(t *testing.T) {
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
-	fileContents := map[string]string{
-		"a.txt": "hello",
-		"b.txt": "world",
+	if err := os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	for name, content := range fileContents {
-		path := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("write temp file: %v", err)
-		}
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("world"), 0644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "subdir", "c.txt"), []byte("nested"), 0644); err != nil {
+		t.Fatalf("write c.txt: %v", err)
 	}
 
 	if err := dataset.CreateFromDir(ctx, store, tmpDir, "from-dir-ds"); err != nil {
@@ -191,8 +192,8 @@ func TestCreateFromDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByName after CreateFromDir: %v", err)
 	}
-	if ds.RelativePath != tmpDir {
-		t.Errorf("RelativePath: got %q, want %q", ds.RelativePath, tmpDir)
+	if ds.CurrentPath != tmpDir {
+		t.Errorf("CurrentPath: got %q, want %q", ds.CurrentPath, tmpDir)
 	}
 
 	gotFiles, err := store.ListFiles(ctx, ds.ID)
@@ -200,7 +201,15 @@ func TestCreateFromDir(t *testing.T) {
 		t.Fatalf("ListFiles: %v", err)
 	}
 	if len(gotFiles) != 2 {
-		t.Errorf("expected 2 files, got %d", len(gotFiles))
+		t.Errorf("expected 2 root-level files, got %d", len(gotFiles))
+	}
+
+	var total int
+	if err := store.DB.QueryRow("SELECT COUNT(*) FROM t_file WHERE dataset = ?", ds.ID).Scan(&total); err != nil {
+		t.Fatalf("count files: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected 3 total files (including subdir), got %d", total)
 	}
 }
 
@@ -208,8 +217,8 @@ func TestListDatasets(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 
-	store.Create(ctx, &dataset.Dataset{Name: "x", RelativePath: "/x"})
-	store.Create(ctx, &dataset.Dataset{Name: "y", RelativePath: "/y"})
+	store.Create(ctx, &dataset.Dataset{Name: "x", CurrentPath: "/x"})
+	store.Create(ctx, &dataset.Dataset{Name: "y", CurrentPath: "/y"})
 
 	all, err := dataset.ListDatasets(ctx, store, dataset.Filter{})
 	if err != nil {

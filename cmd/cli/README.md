@@ -26,41 +26,49 @@ internal/<domain>/  →  领域模型 + Store 接口 + 业务逻辑
 
 ## 全局约定
 
-- 路径参数统一使用 `--source-root` / `--target-root`，表示输入根目录和输出根目录。
+- 路径参数使用 `--source-root` / `--target-root` 表示输入/输出根目录。部分命令自动从 DB 获取这些路径，无需显式传参。
 - 单文件输入使用具体参数名（如 `--shard-file`、`--def-file`、`--ec-shard-file`）。
+- `--def-file` 应使用绝对路径。
 
 ## Shard 定义文件（.def）
 
 Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen-def` 生成，也支持用户自定义脚本生成。
 
+### 分包逻辑
+
+- 单个文件不拆分，一个文件 = 一个 segment。
+- 文件名按文件顺序累加写入当前 shard 的 .def。
+- 当加入下一个文件会使当前 shard 总字节数超过 `shard_max_bytes` 时，关闭当前 shard，创建下一个 shard。
+- 未设置 `shard_max_bytes` 时，所有文件归入一个 shard。
+- shard 文件名用 4 位整数序号：`0000.bin.def`、`0001.bin.def`……
+
 ### 文件名约定
 
 ```
-<id>[.<compress>].<format>.def
+<4位序号>[.<compress>].<format>.def
 ```
 
-| 示例 | id | 压缩 | 打包格式 |
-|------|----|------|---------|
-| `0001.bin.def` | 0001 | 无 | 二进制拼接 |
-| `0002.zst.bin.def` | 0002 | zstd | 二进制拼接 + zstd 压缩 |
-| `0003.tar.def` | 0003 | 无 | tar（含元数据） |
-| `myarcset.bin.def` | myarcset | 无 | 二进制拼接 |
-
-- **id**：顺序号或标识名，`arcset gen-def` 默认用 arcset 名称
-- **compress**：可选，压缩算法（目前 `zst`）
-- **format**：打包格式，`bin`（二进制拼接）/ `tar` / `iso`。目前实现 `bin`
+| 示例 | 说明 |
+|------|------|
+| `0000.bin.def` | 第 1 个 shard，二进制拼接 |
+| `0001.zst.bin.def` | 第 2 个 shard，zstd 压缩 + 二进制拼接 |
+| `0002.tar.def` | 第 3 个 shard，tar 格式 |
 
 ### 内容格式
 
-每行一个 segment，两种写法：
+首行为元数据注释，后续每行一个 segment：
 
 ```
+# arcset_id: 1
+# dataset_id: 3
 相对路径/to/file_a.txt
-{"path":"相对路径/to/file_b.txt","offset":4096,"size":1024}
+相对路径/to/file_b.txt
 ```
 
-- 不以 `{` 开头 → 相对路径，完整文件（offset=0, size=整个文件）
-- 以 `{` 开头 → JSON 行（不含空格），`path` 必填，`offset`/`size` 选填
+- `# arcset_id: N`：arcset 标识，`shard make` 据此获取输出目录（`t_arcset.current_path`）。
+- `# dataset_id: N`：数据集标识，`shard make` 据此获取源目录（`t_dataset.current_path`）。
+- 后续每行一个相对路径（相对于 `dataset.current_path`），完整文件。
+- 一个 shard 不会跨多个 dataset。
 
 ### JSON 字段
 
@@ -75,16 +83,15 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 ### arcset
 
 ```sh
-# 创建归档集
+# 创建归档集（target-root 写入 t_arcset.current_path）
 packfs arcset make \
-  --source-root=/data/source \
   --target-root=/data/output \
   --name=arcset-001 \
   --dataset-ids=1,2,3
 
-# 生成 shard 定义文件（输出到 target-root/<name>.bin.def）
+# 生成 shard 定义文件（输出到 target-root/<arcset-name>.bin.def）
 packfs arcset gen-def \
-  --name=arcset-001 \
+  --id=1 \
   --target-root=/data/output
 
 # 解包归档集
@@ -97,11 +104,13 @@ packfs arcset unpack \
 
 | 子命令 | 参数 | 必填 | 说明 |
 |--------|------|------|------|
-| `make` | `--source-root` | 是 | 源数据根目录 |
-| | `--target-root` | 是 | 输出根目录 |
+| `make` | `--target-root` | 是 | 输出根目录（写入 current_path） |
 | | `--name` | 是 | arcset 名称 |
 | | `--dataset-ids` | 是 | 关联的 dataset ID，逗号分隔 |
-| `gen-def` | `--name` | 是 | arcset 名称 |
+| | `--format` | 否 | 打包格式 bin/iso/tar（缺省 bin） |
+| | `--shard-max-bytes` | 否 | shard 最大字节数 |
+| | `--compress-algo` | 否 | 压缩算法 zst/xz |
+| `gen-def` | `--id` | 是 | arcset ID |
 | | `--target-root` | 是 | shard-def 文件输出目录 |
 | `unpack` | `--source-root` | 是 | shard 文件所在根目录 |
 | | `--target-root` | 是 | 解包输出根目录 |
@@ -111,11 +120,9 @@ packfs arcset unpack \
 ### shard
 
 ```sh
-# 打包单个 shard
+# 打包单个 shard（源路径和目标路径从 DB 自动获取）
 packfs shard make \
-  --source-root=/data/source \
-  --target-root=/data/output \
-  --def-file=shard_001.bin.def
+  --def-file=/absolute/path/to/0000.bin.def
 
 # 解包单个 shard
 packfs shard unpack \
@@ -134,9 +141,7 @@ packfs shard recover \
 
 | 子命令 | 参数 | 必填 | 说明 |
 |--------|------|------|------|
-| `make` | `--source-root` | 是 | 源数据根目录 |
-| | `--target-root` | 是 | shard 输出目录 |
-| | `--def-file` | 是 | shard 定义文件（`.def`，格式见上方说明） |
+| `make` | `--def-file` | 是 | shard 定义文件绝对路径（含 `# arcset_id`） |
 | `unpack` | `--shard-file` | 是 | 待解包的 shard 文件 |
 | | `--target-root` | 是 | 解包输出目录 |
 | `make-ec` | `--def-file` | 是 | EC 定义的 YAML 文件 |
@@ -146,10 +151,10 @@ packfs shard recover \
 ### dataset
 
 ```sh
-# 从目录创建数据集
+# 从目录递归创建数据集
 packfs dataset create \
-  --source-root=/data/source \
-  --name=my-dataset
+  --root-dir=/data/source \
+  [--name=my-dataset]
 
 # 列出数据集
 packfs dataset list \
@@ -159,8 +164,8 @@ packfs dataset list \
 
 | 子命令 | 参数 | 必填 | 说明 |
 |--------|------|------|------|
-| `create` | `--source-root` | 是 | 源数据根目录 |
-| | `--name` | 是 | dataset 名称 |
+| `create` | `--root-dir` | 是 | 源根目录（递归扫描） |
+| | `--name` | 否 | dataset 名称，默认 root-dir 最后一级 |
 | `list` | `--dataset-id` | 否 | 按 ID 筛选 |
 | | `--dataset-name` | 否 | 按名称筛选（支持 regex） |
 

@@ -3,6 +3,7 @@ package shard
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type SegmentDef struct {
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
 	Size   int64  `json:"size"`
+	FileID int    `json:"file_id"`
 }
 
 // ParseDefName 解析 .def 文件名。
@@ -56,8 +58,25 @@ func ParseDefName(filename string) (ShardDefName, error) {
 	return ShardDefName{ID: id, Compress: compress, Format: format}, nil
 }
 
-// ParseDefFile 解析 .def 文件，返回 SegmentDef 列表。
+// DefFileMeta holds metadata extracted from .def comment lines.
+type DefFileMeta struct {
+	ArcsetID  int
+	DatasetID int
+}
+
+// ParseDefFile 解析 .def 文件内容，跳过空行和 # 注释行，返回 SegmentDef 列表。
 func ParseDefFile(r io.Reader) ([]SegmentDef, error) {
+	_, defs, err := parseDefContent(r)
+	return defs, err
+}
+
+// ParseDefFileMeta 解析 .def 文件内容，同时返回注释行中的元数据和 SegmentDef 列表。
+func ParseDefFileMeta(r io.Reader) (DefFileMeta, []SegmentDef, error) {
+	return parseDefContent(r)
+}
+
+func parseDefContent(r io.Reader) (DefFileMeta, []SegmentDef, error) {
+	var meta DefFileMeta
 	var defs []SegmentDef
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -65,13 +84,22 @@ func ParseDefFile(r io.Reader) ([]SegmentDef, error) {
 		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, "#") {
+			if idStr, ok := strings.CutPrefix(line, "# arcset_id: "); ok {
+				fmt.Sscanf(idStr, "%d", &meta.ArcsetID)
+			}
+			if idStr, ok := strings.CutPrefix(line, "# dataset_id: "); ok {
+				fmt.Sscanf(idStr, "%d", &meta.DatasetID)
+			}
+			continue
+		}
 		if strings.HasPrefix(line, "{") {
 			var d SegmentDef
 			if err := json.Unmarshal([]byte(line), &d); err != nil {
-				return nil, errors.WrapE(err, "parse segment json", "line", line)
+				return meta, nil, errors.WrapE(err, "parse segment json", "line", line)
 			}
 			if d.Path == "" {
-				return nil, errors.E("segment path is required", "line", line)
+				return meta, nil, errors.E("segment path is required", "line", line)
 			}
 			defs = append(defs, d)
 		} else {
@@ -79,22 +107,34 @@ func ParseDefFile(r io.Reader) ([]SegmentDef, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, errors.WrapE(err, "read def file")
+		return meta, nil, errors.WrapE(err, "read def file")
 	}
-	return defs, nil
+	return meta, defs, nil
 }
 
 // ReadDefFile opens and parses a .def file by path.
+// Deprecated: use ReadDefFileMeta for arcset_id support.
 func ReadDefFile(path string) (ShardDefName, []SegmentDef, error) {
+	_, _, segs, err := ParseDefFileMetaPath(path)
+	return ShardDefName{}, segs, err
+}
+
+// ReadDefFileMeta opens a .def file and returns name, meta, and segments.
+func ReadDefFileMeta(path string) (ShardDefName, DefFileMeta, []SegmentDef, error) {
+	return ParseDefFileMetaPath(path)
+}
+
+// ParseDefFileMetaPath opens and parses a .def file, returning name + meta + segments.
+func ParseDefFileMetaPath(path string) (ShardDefName, DefFileMeta, []SegmentDef, error) {
 	name, err := ParseDefName(path)
 	if err != nil {
-		return name, nil, err
+		return name, DefFileMeta{}, nil, err
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return name, nil, errors.WrapE(err, "open def file", "path", path)
+		return name, DefFileMeta{}, nil, errors.WrapE(err, "open def file", "path", path)
 	}
 	defer f.Close()
-	defs, err := ParseDefFile(f)
-	return name, defs, err
+	meta, defs, err := parseDefContent(f)
+	return name, meta, defs, err
 }

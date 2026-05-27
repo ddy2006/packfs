@@ -13,12 +13,13 @@ import (
 var schemaSQL string
 
 // OpenSQLite 打开或创建 SQLite 数据库。
-// 数据库路径由环境变量 SQLITE_DB 指定，缺省为 data/packfs.db。
+// 数据库路径由环境变量 SQLITE_DB 指定，缺省为 ~/data/packfs.db。
 // 若数据库文件不存在，则用嵌入的 schema 自动建表。
 func OpenSQLite() (*sql.DB, error) {
 	dbPath := os.Getenv("SQLITE_DB")
 	if dbPath == "" {
-		dbPath = filepath.Join("data", "packfs.db")
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, "data", "packfs.db")
 	}
 
 	needInit := false

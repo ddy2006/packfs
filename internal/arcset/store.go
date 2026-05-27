@@ -16,12 +16,22 @@ type Store interface {
 	// ListArcsetFiles returns all files (t_file rows) linked to an arcset
 	// via r_arcset_dataset, for use in segment generation.
 	ListArcsetFiles(ctx context.Context, arcsetID int) ([]FileRow, error)
+
+	// FindDatasetPath returns t_dataset.current_path for the given dataset ID.
+	FindDatasetPath(ctx context.Context, datasetID int) (string, error)
 }
 
 // FileRow is a row from t_file joined through arcset→dataset.
 type FileRow struct {
-	ID       int
-	FilePath string
-	FileSize int64
-	Checksum string
+	ID        int
+	FilePath  string
+	FileSize  int64
+	Checksum  string
+	DatasetID int
+}
+
+// FileMapEntry maps a relative file path to its absolute source path.
+type FileMapEntry struct {
+	AbsPath string
+	FileID  int
 }

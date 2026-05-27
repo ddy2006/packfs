@@ -20,36 +20,27 @@ func setupDB(t *testing.T) *sql.DB {
 	CREATE TABLE t_dataset (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name VARCHAR,
-		relative_path VARCHAR NOT NULL,
 		label VARCHAR,
-		metadata JSON
+		metadata JSON NOT NULL,
+		current_path VARCHAR,
+		comment TEXT
 	);
 	CREATE TABLE t_file (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		file_path VARCHAR NOT NULL,
 		file_size BIGINT,
 		metadata JSON,
-		ctime DATETIME,
-		mtime DATETIME,
 		checksum TEXT,
-		dataset INTEGER REFERENCES t_dataset(id) ON DELETE SET NULL
+		dataset INTEGER NOT NULL REFERENCES t_dataset(id) ON DELETE CASCADE
 	);
 	CREATE TABLE t_arcset (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name VARCHAR NOT NULL,
-		path_regex VARCHAR NOT NULL,
 		label VARCHAR,
-		create_time DATETIME,
-		rait_type VARCHAR,
 		metadata JSON,
 		status VARCHAR,
-		unit_bytes BIGINT,
-		segment_bytes BIGINT,
-		backend VARCHAR NOT NULL,
-		sum_bytes BIGINT,
-		net_bytes BIGINT,
-		compress_algo TEXT,
 		last_check DATETIME,
+		current_path VARCHAR,
 		comment TEXT
 	);
 	CREATE TABLE r_arcset_dataset (
@@ -71,8 +62,8 @@ func newStore(t *testing.T) *arcset.SQLiteStore {
 
 func seedDataset(t *testing.T, db *sql.DB, name string) int {
 	t.Helper()
-	res, err := db.Exec(`INSERT INTO t_dataset (name, relative_path, label, metadata)
-		VALUES (?, ?, '', '{}')`, name, "/data/"+name)
+	res, err := db.Exec(`INSERT INTO t_dataset (name, label, metadata, current_path)
+		VALUES (?, '', '{}', ?)`, name, "/data/"+name)
 	if err != nil {
 		t.Fatalf("seed dataset: %v", err)
 	}
@@ -87,12 +78,10 @@ func TestCreateArcset(t *testing.T) {
 	dsID := seedDataset(t, store.DB, "ds1")
 
 	params := arcset.CreateArcsetParams{
-		Name:         "arc1",
-		PathRegex:    "/data/.*",
-		Label:        "测试归档集",
-		SegmentBytes: 1024,
-		Backend:      "local",
-		DatasetIDs:   []int{dsID},
+		Name:       "arc1",
+		Label:      "测试归档集",
+		Metadata:   map[string]any{"shard_max_bytes": int64(1024), "format": "bin"},
+		DatasetIDs: []int{dsID},
 	}
 	if err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
@@ -104,9 +93,6 @@ func TestCreateArcset(t *testing.T) {
 	}
 	if a.Name != "arc1" {
 		t.Errorf("Name: got %q, want %q", a.Name, "arc1")
-	}
-	if a.SegmentBytes != 1024 {
-		t.Errorf("SegmentBytes: got %d, want 1024", a.SegmentBytes)
 	}
 
 	refs, err := store.ListDatasetRefs(ctx, a.ID)
@@ -126,9 +112,7 @@ func TestFindArcsetByID(t *testing.T) {
 	ctx := context.Background()
 
 	params := arcset.CreateArcsetParams{
-		Name:         "arc2",
-		PathRegex:    "/data/.*",
-		Backend:      "local",
+		Name: "arc2",
 	}
 	if err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
@@ -152,9 +136,9 @@ func TestFindArcsets(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 
-	store.Create(ctx, &arcset.Arcset{Name: "z", PathRegex: "/z", Backend: "local", Status: "ON"})
-	store.Create(ctx, &arcset.Arcset{Name: "a", PathRegex: "/a", Backend: "local", Status: "OFF"})
-	store.Create(ctx, &arcset.Arcset{Name: "m", PathRegex: "/m", Backend: "local", Status: "ON"})
+	store.Create(ctx, &arcset.Arcset{Name: "z", Status: "ON"})
+	store.Create(ctx, &arcset.Arcset{Name: "a", Status: "OFF"})
+	store.Create(ctx, &arcset.Arcset{Name: "m", Status: "ON"})
 
 	all, err := store.Find(ctx, arcset.Filter{})
 	if err != nil {
@@ -181,7 +165,7 @@ func TestUpdateArcset(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 
-	store.Create(ctx, &arcset.Arcset{Name: "upd", PathRegex: "/u", Backend: "local"})
+	store.Create(ctx, &arcset.Arcset{Name: "upd"})
 
 	newLabel := "更新后"
 	err := store.Update(ctx, "upd", arcset.Update{Label: &newLabel})
@@ -199,8 +183,8 @@ func TestListArcsets(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 
-	store.Create(ctx, &arcset.Arcset{Name: "x", PathRegex: "/x", Backend: "local"})
-	store.Create(ctx, &arcset.Arcset{Name: "y", PathRegex: "/y", Backend: "local"})
+	store.Create(ctx, &arcset.Arcset{Name: "x"})
+	store.Create(ctx, &arcset.Arcset{Name: "y"})
 
 	all, err := arcset.ListArcsets(ctx, store, arcset.Filter{})
 	if err != nil {
@@ -211,49 +195,139 @@ func TestListArcsets(t *testing.T) {
 	}
 }
 
-func TestGenerateSegments(t *testing.T) {
+func TestGenerateShardDefs(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 
 	dsID := seedDataset(t, store.DB, "seg-ds")
+	// a=500 + b=400 fits in one shard (900 < 1024)
+	// c=300 would push first shard over, starts shard 1
 	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
-		VALUES ('a.txt', 3000, 'abc', ?)`, dsID)
+		VALUES ('a.txt', 500, 'abc', ?)`, dsID)
 	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
-		VALUES ('b.txt', 1500, 'def', ?)`, dsID)
+		VALUES ('b.txt', 400, 'def', ?)`, dsID)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('c.txt', 300, 'ghi', ?)`, dsID)
 
 	params := arcset.CreateArcsetParams{
-		Name:         "seg-arc",
-		PathRegex:    "/data/.*",
-		SegmentBytes: 1024,
-		Backend:      "local",
-		DatasetIDs:   []int{dsID},
+		Name:       "seg-arc",
+		Metadata:   map[string]any{"shard_max_bytes": int64(1024)},
+		DatasetIDs: []int{dsID},
 	}
 	if err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
 	}
 
 	a, _ := store.FindByName(ctx, "seg-arc")
-	descs, err := arcset.GenerateSegments(ctx, store, a.ID)
+	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
 	if err != nil {
-		t.Fatalf("GenerateSegments: %v", err)
+		t.Fatalf("GenerateShardDefs: %v", err)
 	}
 
-	// a.txt 3000 bytes / 1024 = 3 segments, b.txt 1500 bytes / 1024 = 2 segments
-	expectedCount := 5
-	if len(descs) != expectedCount {
-		t.Errorf("expected %d segments, got %d", expectedCount, len(descs))
+	// a+b=900 < 1024 → shard 0; c=300 → shard 1
+	if len(shards) != 2 {
+		t.Fatalf("expected 2 shards, got %d", len(shards))
+	}
+	if shards[0].Seq != 0 || len(shards[0].Segments) != 2 {
+		t.Errorf("shard 0: seq=%d, segments=%d", shards[0].Seq, len(shards[0].Segments))
+	}
+	if shards[1].Seq != 1 || len(shards[1].Segments) != 1 {
+		t.Errorf("shard 1: seq=%d, segments=%d", shards[1].Seq, len(shards[1].Segments))
+	}
+	if shards[1].Segments[0].FilePath != "c.txt" {
+		t.Errorf("shard 1 file: %s", shards[1].Segments[0].FilePath)
+	}
+}
+
+func TestGenerateShardDefsNoLimit(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	dsID := seedDataset(t, store.DB, "seg-ds-no")
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('a.txt', 5000, 'abc', ?)`, dsID)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('b.txt', 3000, 'def', ?)`, dsID)
+
+	params := arcset.CreateArcsetParams{
+		Name:       "seg-arc-no",
+		DatasetIDs: []int{dsID},
+	}
+	if err := arcset.CreateArcset(ctx, store, params); err != nil {
+		t.Fatalf("CreateArcset: %v", err)
 	}
 
-	// First segment: a.txt, offset 0, size 1024
-	if descs[0].FilePath != "a.txt" || descs[0].FileOffset != 0 || descs[0].SegmentSize != 1024 {
-		t.Errorf("first segment: %+v", descs[0])
+	a, _ := store.FindByName(ctx, "seg-arc-no")
+	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
+	if err != nil {
+		t.Fatalf("GenerateShardDefs: %v", err)
 	}
-	// Fourth segment: b.txt, offset 0, size 1024
-	if descs[3].FilePath != "b.txt" || descs[3].FileOffset != 0 || descs[3].SegmentSize != 1024 {
-		t.Errorf("fourth segment: %+v", descs[3])
+
+	if len(shards) != 1 {
+		t.Fatalf("expected 1 shard, got %d", len(shards))
 	}
-	// Fifth segment: b.txt, offset 1024, size 476
-	if descs[4].FilePath != "b.txt" || descs[4].FileOffset != 1024 || descs[4].SegmentSize != 476 {
-		t.Errorf("fifth segment: %+v", descs[4])
+	if len(shards[0].Segments) != 2 {
+		t.Errorf("expected 2 segments, got %d", len(shards[0].Segments))
+	}
+}
+
+func TestGenerateShardDefsExactBoundary(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	dsID := seedDataset(t, store.DB, "boundary-ds")
+	// Exactly equal to maxBytes: 4+6=10
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('a.txt', 4, 'abc', ?)`, dsID)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('b.txt', 6, 'def', ?)`, dsID)
+
+	params := arcset.CreateArcsetParams{
+		Name:       "boundary-arc",
+		Metadata:   map[string]any{"shard_max_bytes": int64(10)},
+		DatasetIDs: []int{dsID},
+	}
+	arcset.CreateArcset(ctx, store, params)
+	a, _ := store.FindByName(ctx, "boundary-arc")
+	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
+	if err != nil {
+		t.Fatalf("GenerateShardDefs: %v", err)
+	}
+
+	// a=4 + b=6 = 10 == maxBytes → 同一个 shard
+	if len(shards) != 1 {
+		t.Fatalf("expected 1 shard (exact boundary), got %d", len(shards))
+	}
+	if len(shards[0].Segments) != 2 {
+		t.Errorf("expected 2 segments, got %d", len(shards[0].Segments))
+	}
+}
+
+func TestGenerateShardDefsOverBoundary(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	dsID := seedDataset(t, store.DB, "over-ds")
+	// 4+7=11 > 10, should split
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('a.txt', 4, 'abc', ?)`, dsID)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+		VALUES ('b.txt', 7, 'def', ?)`, dsID)
+
+	params := arcset.CreateArcsetParams{
+		Name:       "over-arc",
+		Metadata:   map[string]any{"shard_max_bytes": int64(10)},
+		DatasetIDs: []int{dsID},
+	}
+	arcset.CreateArcset(ctx, store, params)
+	a, _ := store.FindByName(ctx, "over-arc")
+	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
+	if err != nil {
+		t.Fatalf("GenerateShardDefs: %v", err)
+	}
+
+	// a=4 → shard 0, b=7 → shard 1 (4+7=11 > 10)
+	if len(shards) != 2 {
+		t.Fatalf("expected 2 shards, got %d", len(shards))
 	}
 }

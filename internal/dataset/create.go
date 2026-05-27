@@ -7,14 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/kaichao/gopkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
-// CreateFromDir scans a directory and creates a dataset with file records.
-// dirPath: the local directory to scan.
-// dsName: the name for the new dataset.
+// CreateFromDir recursively scans a directory and creates a dataset with file records.
 func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) error {
 	absPath, err := filepath.Abs(dirPath)
 	if err != nil {
@@ -22,48 +21,62 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) err
 	}
 
 	ds := &Dataset{
-		Name:         dsName,
-		RelativePath: absPath,
+		Name:        dsName,
+		CurrentPath: absPath,
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		return err
 	}
 
-	entries, err := os.ReadDir(absPath)
-	if err != nil {
-		return errors.WrapE(err, "read directory", "dir", absPath)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
+	var fileCount int
+	err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			logrus.Warnf("skip file %s: %v", entry.Name(), err)
-			continue
+			logrus.Warnf("skip %s: %v", path, err)
+			return nil
+		}
+		if d.IsDir() {
+			return nil
 		}
 
-		checksum, err := fileChecksum(filepath.Join(absPath, entry.Name()))
+		info, err := d.Info()
 		if err != nil {
-			logrus.Warnf("skip file %s, checksum failed: %v", entry.Name(), err)
-			continue
+			logrus.Warnf("skip %s: %v", path, err)
+			return nil
+		}
+
+		relPath, err := filepath.Rel(absPath, path)
+		if err != nil {
+			logrus.Warnf("skip %s: %v", path, err)
+			return nil
+		}
+
+		checksum, err := fileChecksum(path)
+		if err != nil {
+			logrus.Warnf("skip %s: %v", path, err)
+			return nil
 		}
 
 		f := &File{
-			FilePath: entry.Name(),
+			FilePath: relPath,
 			FileSize: info.Size(),
-			Ctime:    info.ModTime(), // SQLite schema has ctime, use ModTime as best available
-			Mtime:    info.ModTime(),
+			Metadata: map[string]any{
+				"ctime": info.ModTime().UTC().Format(time.RFC3339),
+				"mtime": info.ModTime().UTC().Format(time.RFC3339),
+			},
 			Checksum: checksum,
-			Dataset:  getDatasetID(ds),
+			Dataset:  ds.ID,
 		}
 		if err := store.AddFileRecord(ctx, f); err != nil {
-			return errors.WrapE(err, "add file record", "file", entry.Name())
+			return errors.WrapE(err, "add file record", "file", relPath)
 		}
+		fileCount++
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
-	logrus.Infof("created dataset %s with %d files from %s", dsName, len(entries), absPath)
+	logrus.Infof("created dataset %s with %d files from %s", dsName, fileCount, absPath)
 	return nil
 }
 
@@ -80,5 +93,3 @@ func fileChecksum(path string) (string, error) {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
-
-func getDatasetID(ds *Dataset) int { return ds.ID }

@@ -1,28 +1,21 @@
 CREATE TABLE "t_arcset" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR NOT NULL,
-  "path_regex" VARCHAR NOT NULL,
   "label" VARCHAR,
-  "create_time" TIMESTAMP,
-  "rait_type" VARCHAR,
   "metadata" JSONB,
   "status" VARCHAR,
-  "unit_bytes" BIGINT,
-  "segment_bytes" BIGINT,
-  "backend" VARCHAR NOT NULL,
-  "sum_bytes" BIGINT,
-  "net_bytes" BIGINT,
-  "compress_algo" TEXT DEFAULT VARCHAT,
   "last_check" TIMESTAMP,
+  "current_path" VARCHAR,
   "comment" TEXT
 );
 
 CREATE TABLE "t_dataset" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR,
-  "relative_path" VARCHAR NOT NULL,
   "label" VARCHAR,
-  "metadata" JSONB NOT NULL
+  "metadata" JSONB NOT NULL,
+  "current_path" VARCHAR,
+  "comment" TEXT
 );
 
 CREATE TABLE "r_arcset_dataset" (
@@ -44,15 +37,13 @@ CREATE TABLE "t_file" (
   "file_path" VARCHAR NOT NULL,
   "file_size" BIGINT,
   "metadata" JSONB,
-  "ctime" TIMESTAMP,
-  "mtime" TIMESTAMP,
   "checksum" TEXT,
-  "dataset" INTEGER
+  "dataset" INTEGER NOT NULL
 );
 
 CREATE INDEX "idx_t_file__dataset" ON "t_file" ("dataset");
 
-ALTER TABLE "t_file" ADD CONSTRAINT "fk_t_file__dataset" FOREIGN KEY ("dataset") REFERENCES "t_dataset" ("id") ON DELETE SET NULL;
+ALTER TABLE "t_file" ADD CONSTRAINT "fk_t_file__dataset" FOREIGN KEY ("dataset") REFERENCES "t_dataset" ("id") ON DELETE CASCADE;
 
 CREATE TABLE "t_fs_mount" (
   "id" SERIAL PRIMARY KEY,
@@ -74,25 +65,21 @@ CREATE TABLE "t_shard" (
   "file_size" BIGINT,
   "type" VARCHAR,
   "checksum" VARCHAR,
-  "backend" VARCHAR NOT NULL,
   "metadata" JSONB,
   "last_check" TIMESTAMP,
-  "arcset" INTEGER
+  "arcset" INTEGER NOT NULL
 );
 
 CREATE INDEX "idx_t_shard__arcset" ON "t_shard" ("arcset");
 
-ALTER TABLE "t_shard" ADD CONSTRAINT "fk_t_shard__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE SET NULL;
+ALTER TABLE "t_shard" ADD CONSTRAINT "fk_t_shard__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE CASCADE;
 
 CREATE TABLE "t_segment" (
   "id" SERIAL PRIMARY KEY,
-  "shard_path" VARCHAR NOT NULL,
   "offset" BIGINT,
   "size" BIGINT,
   "shard" INTEGER NOT NULL,
   "arcset" INTEGER NOT NULL,
-  "compress_algo" VARCHAR NOT NULL,
-  "checksum" VARCHAR,
   "file" INTEGER NOT NULL,
   "file_offset" BIGINT,
   "file_size" BIGINT
@@ -112,8 +99,8 @@ ALTER TABLE "t_segment" ADD CONSTRAINT "fk_t_segment__shard" FOREIGN KEY ("shard
 
 CREATE TABLE "t_tape" (
   "id" SERIAL PRIMARY KEY,
-  "arcset" INTEGER NOT NULL,
   "bar_code" TEXT NOT NULL,
+  "arcset" INTEGER,
   "spec" JSONB,
   "location" TEXT,
   "comment" TEXT
@@ -121,4 +108,4 @@ CREATE TABLE "t_tape" (
 
 CREATE INDEX "idx_t_tape__arcset" ON "t_tape" ("arcset");
 
-ALTER TABLE "t_tape" ADD CONSTRAINT "fk_t_tape__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE CASCADE;
+ALTER TABLE "t_tape" ADD CONSTRAINT "fk_t_tape__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE SET NULL;

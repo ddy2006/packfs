@@ -20,9 +20,9 @@ func makeCmd() *cobra.Command {
 			if name == "" {
 				return errors.E("--name is required")
 			}
-			sourceRoot, _ := cmd.Flags().GetString("source-root")
-			if sourceRoot == "" {
-				return errors.E("--source-root is required")
+			targetRoot, _ := cmd.Flags().GetString("target-root")
+			if targetRoot == "" {
+				return errors.E("--target-root is required")
 			}
 			dsIDsStr, _ := cmd.Flags().GetString("dataset-ids")
 			if dsIDsStr == "" {
@@ -37,12 +37,22 @@ func makeCmd() *cobra.Command {
 				return errors.E("--dataset-ids must contain at least one ID")
 			}
 
-			backend, _ := cmd.Flags().GetString("backend")
-			if backend == "" {
-				backend = "local"
+			format, _ := cmd.Flags().GetString("format")
+			if format == "" {
+				format = "bin"
 			}
-			segmentBytes, _ := cmd.Flags().GetInt64("segment-bytes")
-			comment, _ := cmd.Flags().GetString("comment")
+			shardMaxBytes, _ := cmd.Flags().GetInt64("shard-max-bytes")
+			compressAlgo, _ := cmd.Flags().GetString("compress-algo")
+
+			metadata := map[string]any{
+				"format":    format,
+			}
+			if shardMaxBytes > 0 {
+				metadata["shard_max_bytes"] = shardMaxBytes
+			}
+			if compressAlgo != "" {
+				metadata["compress_algo"] = compressAlgo
+			}
 
 			sqlDB, err := db.OpenSQLite()
 			if err != nil {
@@ -52,21 +62,19 @@ func makeCmd() *cobra.Command {
 
 			store := arcset.NewSQLiteStore(sqlDB)
 			return arcset.CreateArcset(context.Background(), store, arcset.CreateArcsetParams{
-				Name:         name,
-				PathRegex:    sourceRoot,
-				Backend:      backend,
-				SegmentBytes: segmentBytes,
-				DatasetIDs:   dsIDs,
-				Comment:      comment,
+				Name:        name,
+				CurrentPath: targetRoot,
+				Metadata:    metadata,
+				DatasetIDs:  dsIDs,
 			})
 		},
 	}
-	cmd.Flags().String("source-root", "", "source root directory")
+	cmd.Flags().String("target-root", "", "output directory for shard files")
 	cmd.Flags().String("name", "", "arcset name")
 	cmd.Flags().String("dataset-ids", "", "comma-separated dataset IDs")
-	cmd.Flags().String("backend", "local", "storage backend")
-	cmd.Flags().Int64("segment-bytes", 0, "segment size in bytes")
-	cmd.Flags().String("comment", "", "comment")
+	cmd.Flags().String("format", "bin", "pack format: bin/iso/tar")
+	cmd.Flags().Int64("shard-max-bytes", 0, "max shard size in bytes")
+	cmd.Flags().String("compress-algo", "", "compression algorithm: zst/xz")
 	return cmd
 }
 

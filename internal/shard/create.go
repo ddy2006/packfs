@@ -23,14 +23,11 @@ func CreateShard(
 	seq int,
 	outputDir string,
 	shardType string,
-	backend string,
-	compressAlgo string,
 ) error {
 	if len(descs) == 0 {
 		return errors.E("no segments to pack")
 	}
 
-	// file_path 存相对路径，物理文件写入 outputDir 下。
 	shardRelPath := fmt.Sprintf("shard_%d_%04d.pak", arcsetID, seq)
 	shardAbsPath := filepath.Join(outputDir, shardRelPath)
 
@@ -40,32 +37,28 @@ func CreateShard(
 	}
 	defer out.Close()
 
-	// Write segments to the shard file, collecting segment metadata.
 	type pendingSeg struct {
-		seg       *Segment
-		desc      arcset.SegmentDesc
+		seg  *Segment
+		desc arcset.SegmentDesc
 	}
 	var pendings []pendingSeg
 	var shardSize int64
 	shardHash := sha256.New()
 
 	for _, desc := range descs {
-		segChecksum, n, err := copySegmentTo(out, shardHash, desc)
+		_, n, err := copySegmentTo(out, shardHash, desc)
 		if err != nil {
 			return errors.WrapE(err, "write segment to shard", "file", desc.FilePath)
 		}
 
 		pendings = append(pendings, pendingSeg{
 			seg: &Segment{
-				ShardPath:    shardRelPath,
-				Offset:       shardSize,
-				Size:         n,
-				Arcset:       arcsetID,
-				CompressAlgo: compressAlgo,
-				Checksum:     segChecksum,
-				File:         desc.FileID,
-				FileOffset:   desc.FileOffset,
-				FileSize:     desc.FileSize,
+				Offset:     shardSize,
+				Size:       n,
+				Arcset:     arcsetID,
+				File:       desc.FileID,
+				FileOffset: desc.FileOffset,
+				FileSize:   desc.FileSize,
 			},
 			desc: desc,
 		})
@@ -80,7 +73,6 @@ func CreateShard(
 		FileSize:  shardSize,
 		Type:      shardType,
 		Checksum:  shardChecksum,
-		Backend:   backend,
 		LastCheck: time.Now(),
 		Arcset:    arcsetID,
 	}

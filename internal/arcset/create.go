@@ -10,35 +10,29 @@ import (
 
 // CreateArcsetParams holds the inputs for creating an arcset.
 type CreateArcsetParams struct {
-	Name         string
-	PathRegex    string
-	Label        string
-	RaitType     string
-	UnitBytes    int64
-	SegmentBytes int64
-	Backend      string
-	CompressAlgo string
-	Comment      string
-	DatasetIDs   []int
+	Name        string
+	Label       string
+	CurrentPath string
+	Metadata    map[string]any
+	DatasetIDs  []int
 }
 
 // CreateArcset creates an arcset record and links it to the given datasets.
 func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) error {
-	a := &Arcset{
-		Name:         params.Name,
-		PathRegex:    params.PathRegex,
-		Label:        params.Label,
-		CreateTime:   time.Now(),
-		RaitType:     params.RaitType,
-		UnitBytes:    params.UnitBytes,
-		SegmentBytes: params.SegmentBytes,
-		Backend:      params.Backend,
-		CompressAlgo: params.CompressAlgo,
-		Comment:      params.Comment,
-		Status:       "ON",
+	metadata := params.Metadata
+	if metadata == nil {
+		metadata = make(map[string]any)
 	}
-	if a.Metadata == nil {
-		a.Metadata = make(map[string]any)
+	if _, ok := metadata["create_time"]; !ok {
+		metadata["create_time"] = time.Now().Format(time.RFC3339)
+	}
+
+	a := &Arcset{
+		Name:        params.Name,
+		Label:       params.Label,
+		CurrentPath: params.CurrentPath,
+		Metadata:    metadata,
+		Status:      "ON",
 	}
 
 	if err := store.Create(ctx, a); err != nil {

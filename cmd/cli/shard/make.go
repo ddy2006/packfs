@@ -1,15 +1,19 @@
 package shard
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/ddy2006/packfs/internal/arcset"
+	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
-	"github.com/kaichao/gopkg/param"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -18,36 +22,56 @@ func makeCmd() *cobra.Command {
 		Use:   "make",
 		Short: "Make shard",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sourceRoot, err := param.GetString(cmd, "source-root", param.WithRequired())
-			if err != nil {
-				return errors.WrapE(err, 1, "get parameter source-root failed")
+			defFile, _ := cmd.Flags().GetString("def-file")
+			if defFile == "" {
+				return errors.E("--def-file is required")
 			}
-			targetRoot, err := param.GetString(cmd, "target-root", param.WithRequired())
+
+			sqlDB, err := db.OpenSQLite()
 			if err != nil {
-				return errors.WrapE(err, 1, "get parameter target-root failed")
+				return errors.WrapE(err, "open database")
 			}
-			defFile, err := param.GetString(cmd, "def-file", param.WithRequired())
-			if err != nil {
-				return errors.WrapE(err, 1, "get parameter def-file failed")
-			}
-			return doMakeShard(sourceRoot, targetRoot, defFile)
+			defer sqlDB.Close()
+
+			return doMakeShard(sqlDB, defFile)
 		},
 	}
-	cmd.Flags().String("source-root", "", "source root directory")
-	cmd.Flags().String("target-root", "", "target root directory")
-	cmd.Flags().String("def-file", "", "shard definition file")
+	cmd.Flags().String("def-file", "", "absolute path to shard definition file")
 	return cmd
 }
 
-func doMakeShard(sourceRoot, targetRoot, defFile string) error {
-	defName, segs, err := shard.ReadDefFile(defFile)
+func doMakeShard(sqlDB *sql.DB, defFile string) error {
+	_, meta, segs, err := shard.ReadDefFileMeta(defFile)
 	if err != nil {
 		return errors.WrapE(err, "read def file")
 	}
-	_ = defName
+	if meta.ArcsetID <= 0 {
+		return errors.E("arcset_id not found in def file, run gen-def first")
+	}
+	if meta.DatasetID <= 0 {
+		return errors.E("dataset_id not found in def file, run gen-def first")
+	}
 
+	arcStore := arcset.NewSQLiteStore(sqlDB)
+	a, err := arcStore.FindByID(context.Background(), meta.ArcsetID)
+	if err != nil {
+		return errors.WrapE(err, "find arcset")
+	}
+
+	// target-root = arcset.current_path
+	targetRoot := a.CurrentPath
 	outName := defFile[:len(defFile)-4] // strip ".def"
 	outPath := filepath.Join(targetRoot, filepath.Base(outName))
+
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		return errors.WrapE(err, "create output directory")
+	}
+
+	// source-root = dataset.current_path
+	sourceRoot, err := arcStore.FindDatasetPath(context.Background(), meta.DatasetID)
+	if err != nil {
+		return errors.WrapE(err, "find dataset path")
+	}
 
 	out, err := os.Create(outPath)
 	if err != nil {
@@ -55,6 +79,7 @@ func doMakeShard(sourceRoot, targetRoot, defFile string) error {
 	}
 	defer out.Close()
 
+	shardStore := shard.NewSQLiteStore(sqlDB)
 	var totalSize int64
 	shardHash := sha256.New()
 	mw := io.MultiWriter(out, shardHash)
@@ -64,28 +89,41 @@ func doMakeShard(sourceRoot, targetRoot, defFile string) error {
 		if !filepath.IsAbs(srcPath) {
 			srcPath = filepath.Join(sourceRoot, seg.Path)
 		}
-		src, err := os.Open(srcPath)
+
+		// 校验文件大小是否与 DB 记录一致
+		if info, err := os.Stat(srcPath); err == nil {
+			var dbSize int64
+			_ = sqlDB.QueryRowContext(context.Background(),
+				`SELECT file_size FROM t_file WHERE file_path = ? AND dataset = ?`,
+				seg.Path, meta.DatasetID).Scan(&dbSize)
+			if dbSize > 0 && info.Size() != dbSize {
+				logrus.Warnf("%s: size changed since dataset creation (db=%d, disk=%d)",
+					seg.Path, dbSize, info.Size())
+			}
+		}
+
+		f, err := os.Open(srcPath)
 		if err != nil {
 			return errors.WrapE(err, "open source file", "path", seg.Path)
 		}
 
 		if seg.Offset > 0 {
-			if _, err := src.Seek(seg.Offset, io.SeekStart); err != nil {
-				src.Close()
+			if _, err := f.Seek(seg.Offset, io.SeekStart); err != nil {
+				f.Close()
 				return errors.WrapE(err, "seek source file", "path", seg.Path)
 			}
 		}
 
 		if seg.Size <= 0 {
-			n, err := io.Copy(mw, src)
-			src.Close()
+			n, err := io.Copy(mw, f)
+			f.Close()
 			if err != nil {
 				return errors.WrapE(err, "copy file", "path", seg.Path)
 			}
 			totalSize += n
 		} else {
-			n, err := io.CopyN(mw, src, seg.Size)
-			src.Close()
+			n, err := io.CopyN(mw, f, seg.Size)
+			f.Close()
 			if err != nil && err != io.EOF {
 				return errors.WrapE(err, "copy segment", "path", seg.Path)
 			}
@@ -93,7 +131,20 @@ func doMakeShard(sourceRoot, targetRoot, defFile string) error {
 		}
 	}
 
-	checksum := fmt.Sprintf("%x", shardHash.Sum(nil))
-	fmt.Printf("created shard %s (%d bytes, sha256=%s)\n", outPath, totalSize, checksum)
+	shardChecksum := fmt.Sprintf("%x", shardHash.Sum(nil))
+
+	relPath := filepath.Base(outPath)
+	sh := &shard.Shard{
+		FilePath: relPath,
+		FileSize: totalSize,
+		Type:     "DATA",
+		Checksum: shardChecksum,
+		Arcset:   meta.ArcsetID,
+	}
+	if err := shardStore.CreateShard(context.Background(), sh); err != nil {
+		return err
+	}
+
+	fmt.Printf("created shard %s (%d bytes, sha256=%s)\n", outPath, totalSize, shardChecksum)
 	return nil
 }
