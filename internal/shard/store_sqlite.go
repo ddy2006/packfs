@@ -20,11 +20,11 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore { return &SQLiteStore{DB: db} }
 func (s *SQLiteStore) CreateShard(ctx context.Context, sh *Shard) error {
 	metadataJSON, _ := json.Marshal(sh.Metadata)
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO t_shard (seq, file_path, file_size, type, checksum, metadata, last_check, arcset, dataset)
+		`INSERT INTO t_shard (seq, file_path, file_size, type, sha256, metadata, last_check, arcset, dataset)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(arcset, dataset, file_path)
 		 DO UPDATE SET seq=excluded.seq, file_size=excluded.file_size, type=excluded.type,
-		               checksum=excluded.checksum, metadata=excluded.metadata,
+		               sha256=excluded.sha256, metadata=excluded.metadata,
 		               last_check=excluded.last_check`,
 		sh.Seq, sh.FilePath, sh.FileSize, sh.Type, sh.Checksum,
 		string(metadataJSON), sh.LastCheck, sh.Arcset, sh.Dataset)
@@ -67,7 +67,7 @@ func (s *SQLiteStore) ReplaceSegments(ctx context.Context, shardID int, segs []*
 
 func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard, error) {
 	query := `SELECT id, COALESCE(seq,0), file_path, COALESCE(file_size,0), COALESCE(type,''),
-	           COALESCE(checksum,''), COALESCE(metadata,'{}'),
+	           COALESCE(sha256,''), COALESCE(metadata,'{}'),
 	           COALESCE(last_check,''), arcset, dataset
 	           FROM t_shard WHERE arcset = ? ORDER BY seq`
 	rows, err := s.DB.QueryContext(ctx, query, arcsetID)
@@ -101,19 +101,19 @@ func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard,
 	return shards, rows.Err()
 }
 
-func (s *SQLiteStore) FindByFilePath(ctx context.Context, filePath string) (*Shard, error) {
+func (s *SQLiteStore) FindByArcsetAndFilePath(ctx context.Context, arcsetID int, filePath string) (*Shard, error) {
 	query := `SELECT id, COALESCE(seq,0), file_path, COALESCE(file_size,0), COALESCE(type,''),
-	           COALESCE(checksum,''), COALESCE(metadata,'{}'),
+	           COALESCE(sha256,''), COALESCE(metadata,'{}'),
 	           COALESCE(last_check,''), arcset, dataset
-	           FROM t_shard WHERE file_path = ?`
+	           FROM t_shard WHERE arcset = ? AND file_path = ?`
 	sh := &Shard{}
 	var metadataBytes []byte
 	var lastCheck string
-	err := s.DB.QueryRowContext(ctx, query, filePath).Scan(
+	err := s.DB.QueryRowContext(ctx, query, arcsetID, filePath).Scan(
 		&sh.ID, &sh.Seq, &sh.FilePath, &sh.FileSize, &sh.Type, &sh.Checksum,
 		&metadataBytes, &lastCheck, &sh.Arcset, &sh.Dataset)
 	if err == sql.ErrNoRows {
-		return nil, errors.E("shard not found", "file_path", filePath)
+		return nil, errors.E("shard not found", "arcset_id", arcsetID, "file_path", filePath)
 	}
 	if err != nil {
 		return nil, errors.WrapE(err, "find shard by file path")

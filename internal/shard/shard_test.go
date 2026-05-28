@@ -26,7 +26,7 @@ func setupDB(t *testing.T) *sql.DB {
 		file_path TEXT,
 		file_size BIGINT,
 		type VARCHAR,
-		checksum VARCHAR,
+		sha256 VARCHAR,
 		metadata JSON,
 		last_check DATETIME,
 		arcset INTEGER NOT NULL,

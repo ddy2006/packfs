@@ -17,7 +17,7 @@ go test -v ./internal/dataset/  # 单包测试
 packfs 是一个文件打包系统，将目录中的小文件合并成大文件（shard），减少磁盘碎片。
 
 ```
-dataset ──> arcset ──> shard ──> segment ──> file
+dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ──> file
 ```
 
 - **dataset**：不可变文件集合，从磁盘目录扫描创建

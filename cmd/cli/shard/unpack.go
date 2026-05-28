@@ -26,6 +26,10 @@ func unpackCmd() *cobra.Command {
 			if targetRoot == "" {
 				return errors.E("--target-root is required")
 			}
+			arcsetID, _ := cmd.Flags().GetInt("arcset-id")
+			if arcsetID <= 0 {
+				return errors.E("--arcset-id is required")
+			}
 
 			sqlDB, err := db.OpenSQLite()
 			if err != nil {
@@ -37,12 +41,12 @@ func unpackCmd() *cobra.Command {
 
 			// 用 filepath.Base 匹配 DB 中的相对路径
 			relPath := filepath.Base(shardFile)
-			sh, err := store.FindByFilePath(context.Background(), relPath)
+			sh, err := store.FindByArcsetAndFilePath(context.Background(), arcsetID, relPath)
 			if err != nil {
 				// 尝试用完整参数路径（可能用户传的就是相对路径）
-				sh, err = store.FindByFilePath(context.Background(), shardFile)
+				sh, err = store.FindByArcsetAndFilePath(context.Background(), arcsetID, shardFile)
 				if err != nil {
-					return errors.WrapE(err, "find shard", "file", shardFile)
+					return errors.WrapE(err, "find shard", "arcset_id", arcsetID, "file", shardFile)
 				}
 			}
 
@@ -56,6 +60,7 @@ func unpackCmd() *cobra.Command {
 	}
 	cmd.Flags().String("shard-file", "", "shard file to unpack")
 	cmd.Flags().String("target-root", "", "target root directory")
+	cmd.Flags().Int("arcset-id", 0, "arcset ID")
 	return cmd
 }
 

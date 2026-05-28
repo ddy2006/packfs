@@ -5,6 +5,7 @@ type Dataset struct {
 	ID          int
 	Name        string
 	Label       string
+	Status      string
 	Metadata    map[string]any
 	CurrentPath string
 	Comment     string

@@ -145,7 +145,7 @@ func (s *SQLiteStore) ListDatasetRefs(ctx context.Context, arcsetID int) ([]Data
 }
 
 func (s *SQLiteStore) ListArcsetFiles(ctx context.Context, arcsetID int) ([]FileRow, error) {
-	query := `SELECT f.id, f.file_path, COALESCE(f.file_size, 0), COALESCE(f.checksum, ''), f.dataset
+	query := `SELECT f.id, f.file_path, COALESCE(f.file_size, 0), COALESCE(f.sha256, ''), f.dataset
 	           FROM t_file f
 	           JOIN r_arcset_dataset r ON r.dataset = f.dataset
 	           WHERE r.arcset = ?

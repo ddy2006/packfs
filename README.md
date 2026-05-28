@@ -71,6 +71,7 @@ net_bytes       | 所有数据 shard（排除 EC shard）的总字节数
 属性名      | 属性说明
 ---------- | ------------------------
 shard_type | 'DATA' / 'EC'，数据 shard 或 EC shard
+data_bytes | 所有 segment 原始字节总和
 
 ### 3. 文件系统设计 
 
@@ -99,7 +100,7 @@ packfs shard make --def-file=/data/output/0000.bin.def
 
 ```sh
 # 解包单个 shard
-packfs shard unpack --shard-file=/path/to/0000.bin --target-root=/extract
+packfs shard unpack --shard-file=/path/to/0000.bin --target-root=/extract --arcset-id=1
 
 # 解包整个 arcset
 packfs arcset unpack --name=my-arc --source-root=/data/output --target-root=/extract

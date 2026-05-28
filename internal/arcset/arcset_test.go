@@ -21,8 +21,9 @@ func setupDB(t *testing.T) *sql.DB {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name VARCHAR,
 		label VARCHAR,
-		metadata JSON NOT NULL,
-		current_path VARCHAR,
+		status TEXT,
+			metadata JSON NOT NULL,
+			current_path VARCHAR,
 		comment TEXT
 	);
 	CREATE TABLE t_file (
@@ -30,7 +31,7 @@ func setupDB(t *testing.T) *sql.DB {
 		file_path VARCHAR NOT NULL,
 		file_size BIGINT,
 		metadata JSON,
-		checksum TEXT,
+		sha256 TEXT,
 		dataset INTEGER NOT NULL REFERENCES t_dataset(id) ON DELETE CASCADE
 	);
 	CREATE TABLE t_arcset (
@@ -202,11 +203,11 @@ func TestGenerateShardDefs(t *testing.T) {
 	dsID := seedDataset(t, store.DB, "seg-ds")
 	// a=500 + b=400 fits in one shard (900 < 1024)
 	// c=300 would push first shard over, starts shard 1
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('a.txt', 500, 'abc', ?)`, dsID)
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('b.txt', 400, 'def', ?)`, dsID)
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('c.txt', 300, 'ghi', ?)`, dsID)
 
 	params := arcset.CreateArcsetParams{
@@ -244,9 +245,9 @@ func TestGenerateShardDefsNoLimit(t *testing.T) {
 	ctx := context.Background()
 
 	dsID := seedDataset(t, store.DB, "seg-ds-no")
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('a.txt', 5000, 'abc', ?)`, dsID)
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('b.txt', 3000, 'def', ?)`, dsID)
 
 	params := arcset.CreateArcsetParams{
@@ -277,9 +278,9 @@ func TestGenerateShardDefsExactBoundary(t *testing.T) {
 
 	dsID := seedDataset(t, store.DB, "boundary-ds")
 	// Exactly equal to maxBytes: 4+6=10
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('a.txt', 4, 'abc', ?)`, dsID)
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('b.txt', 6, 'def', ?)`, dsID)
 
 	params := arcset.CreateArcsetParams{
@@ -309,9 +310,9 @@ func TestGenerateShardDefsOverBoundary(t *testing.T) {
 
 	dsID := seedDataset(t, store.DB, "over-ds")
 	// 4+7=11 > 10, should split
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('a.txt', 4, 'abc', ?)`, dsID)
-	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, checksum, dataset)
+	store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
 		VALUES ('b.txt', 7, 'def', ?)`, dsID)
 
 	params := arcset.CreateArcsetParams{

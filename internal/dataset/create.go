@@ -29,6 +29,7 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) err
 	}
 
 	var fileCount int
+	var totalBytes int64
 	err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			logrus.Warnf("skip %s: %v", path, err)
@@ -70,13 +71,21 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) err
 			return errors.WrapE(err, "add file record", "file", relPath)
 		}
 		fileCount++
+		totalBytes += info.Size()
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	logrus.Infof("created dataset %s with %d files from %s", dsName, fileCount, absPath)
+	if err := store.UpdateMetadata(ctx, ds.ID, map[string]any{
+		"num_files":   fileCount,
+		"total_bytes": totalBytes,
+	}); err != nil {
+		return err
+	}
+
+	logrus.Infof("created dataset %s with %d files (%d bytes) from %s", dsName, fileCount, totalBytes, absPath)
 	return nil
 }
 

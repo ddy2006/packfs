@@ -4,8 +4,8 @@ CREATE TABLE "t_arcset" (
   "label" VARCHAR,
   "metadata" JSONB,
   "status" VARCHAR,
-  "last_check" TIMESTAMP,
   "current_path" VARCHAR,
+  "last_check" TIMESTAMP,
   "comment" TEXT
 );
 
@@ -14,6 +14,7 @@ CREATE TABLE "t_dataset" (
   "name" VARCHAR,
   "label" VARCHAR,
   "metadata" JSONB NOT NULL,
+  "status" TEXT,
   "current_path" VARCHAR,
   "comment" TEXT
 );
@@ -37,7 +38,7 @@ CREATE TABLE "t_file" (
   "file_path" VARCHAR NOT NULL,
   "file_size" BIGINT,
   "metadata" JSONB,
-  "checksum" TEXT,
+  "sha256" TEXT,
   "dataset" INTEGER NOT NULL
 );
 
@@ -64,8 +65,8 @@ CREATE TABLE "t_shard" (
   "file_path" TEXT,
   "file_size" BIGINT,
   "type" VARCHAR,
-  "checksum" VARCHAR,
   "metadata" JSONB,
+  "sha256" VARCHAR,
   "last_check" TIMESTAMP,
   "arcset" INTEGER NOT NULL,
   "dataset" INTEGER NOT NULL
@@ -100,12 +101,23 @@ ALTER TABLE "t_segment" ADD CONSTRAINT "fk_t_segment__shard" FOREIGN KEY ("shard
 CREATE TABLE "t_tape" (
   "id" SERIAL PRIMARY KEY,
   "bar_code" TEXT NOT NULL,
-  "arcset" INTEGER,
   "spec" JSONB,
   "location" TEXT,
+  "status" TEXT,
+  "last_access" TIMESTAMP,
   "comment" TEXT
 );
 
-CREATE INDEX "idx_t_tape__arcset" ON "t_tape" ("arcset");
+CREATE TABLE "r_shard_tape" (
+  "id" SERIAL PRIMARY KEY,
+  "shard" INTEGER NOT NULL,
+  "tape" INTEGER NOT NULL
+);
 
-ALTER TABLE "t_tape" ADD CONSTRAINT "fk_t_tape__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE SET NULL;
+CREATE INDEX "idx_r_shard_tape__shard" ON "r_shard_tape" ("shard");
+
+CREATE INDEX "idx_r_shard_tape__tape" ON "r_shard_tape" ("tape");
+
+ALTER TABLE "r_shard_tape" ADD CONSTRAINT "fk_r_shard_tape__shard" FOREIGN KEY ("shard") REFERENCES "t_shard" ("id") ON DELETE CASCADE;
+
+ALTER TABLE "r_shard_tape" ADD CONSTRAINT "fk_r_shard_tape__tape" FOREIGN KEY ("tape") REFERENCES "t_tape" ("id") ON DELETE CASCADE;

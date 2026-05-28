@@ -4,8 +4,8 @@ CREATE TABLE "T_arcset" (
   "label" VARCHAR,
   "metadata" JSON,
   "status" VARCHAR,
-  "last_check" DATETIME,
   "current_path" VARCHAR,
+  "last_check" DATETIME,
   "comment" TEXT
 );
 
@@ -14,6 +14,7 @@ CREATE TABLE "T_dataset" (
   "name" VARCHAR,
   "label" VARCHAR,
   "metadata" JSON NOT NULL,
+  "status" TEXT,
   "current_path" VARCHAR,
   "comment" TEXT
 );
@@ -33,7 +34,7 @@ CREATE TABLE "T_file" (
   "file_path" VARCHAR NOT NULL,
   "file_size" BIGINT,
   "metadata" JSON,
-  "checksum" TEXT,
+  "sha256" TEXT,
   "dataset" INTEGER NOT NULL REFERENCES "T_dataset" ("id") ON DELETE CASCADE
 );
 
@@ -56,8 +57,8 @@ CREATE TABLE "T_shard" (
   "file_path" TEXT,
   "file_size" BIGINT,
   "type" VARCHAR,
-  "checksum" VARCHAR,
   "metadata" JSON,
+  "sha256" VARCHAR,
   "last_check" DATETIME,
   "arcset" INTEGER NOT NULL REFERENCES "T_arcset" ("id") ON DELETE CASCADE,
   "dataset" INTEGER NOT NULL REFERENCES "T_dataset" ("id") ON DELETE CASCADE
@@ -66,9 +67,6 @@ CREATE TABLE "T_shard" (
 CREATE INDEX "idx_t_shard__arcset" ON "T_shard" ("arcset");
 
 CREATE INDEX "idx_t_shard__dataset" ON "T_shard" ("dataset");
-
-CREATE UNIQUE INDEX "idx_t_shard__arcset_dataset_file_path"
-  ON "T_shard" ("arcset", "dataset", "file_path");
 
 CREATE TABLE "T_segment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,10 +85,22 @@ CREATE INDEX "idx_t_segment__shard" ON "T_segment" ("shard");
 CREATE TABLE "T_tape" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "bar_code" TEXT NOT NULL,
-  "arcset" INTEGER REFERENCES "T_arcset" ("id") ON DELETE SET NULL,
   "spec" JSON,
   "location" TEXT,
+  "status" TEXT,
+  "last_access" DATETIME,
   "comment" TEXT
 );
 
-CREATE INDEX "idx_t_tape__arcset" ON "T_tape" ("arcset");
+CREATE TABLE "R_shard_tape" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "shard" INTEGER NOT NULL REFERENCES "T_shard" ("id") ON DELETE CASCADE,
+  "tape" INTEGER NOT NULL REFERENCES "T_tape" ("id") ON DELETE CASCADE
+);
+
+CREATE INDEX "idx_r_shard_tape__shard" ON "R_shard_tape" ("shard");
+
+CREATE INDEX "idx_r_shard_tape__tape" ON "R_shard_tape" ("tape");
+
+CREATE UNIQUE INDEX "idx_t_shard__arcset_dataset_file_path"
+  ON "T_shard" ("arcset", "dataset", "file_path");

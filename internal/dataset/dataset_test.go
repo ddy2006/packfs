@@ -23,8 +23,9 @@ func setupDB(t *testing.T) *sql.DB {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name VARCHAR,
 		label VARCHAR,
-		metadata JSON NOT NULL,
-		current_path VARCHAR,
+		status TEXT,
+			metadata JSON NOT NULL,
+			current_path VARCHAR,
 		comment TEXT
 	);
 	CREATE TABLE t_file (
@@ -32,7 +33,7 @@ func setupDB(t *testing.T) *sql.DB {
 		file_path VARCHAR NOT NULL,
 		file_size BIGINT,
 		metadata JSON,
-		checksum TEXT,
+		sha256 TEXT,
 		dataset INTEGER NOT NULL REFERENCES t_dataset(id) ON DELETE CASCADE
 	);
 	`
