@@ -9,7 +9,7 @@ cmd/cli/
 ├── main.go               # 入口，组装 cobra 命令树
 ├── root.go               # package main：rootCmd、日志初始化、错误处理
 ├── dataset/dataset.go    # package dataset：create、list 命令逻辑
-├── arcset/arcset.go      # package arcset：make、gen-def、unpack 命令逻辑
+├── arcset/arcset.go      # package arcset：create、gen-def、unpack 命令逻辑
 ├── shard/shard.go        # package shard：make、unpack、make-ec、recover 命令逻辑
 ├── fs/fs.go              # package fs：mount、umount、fsck 命令逻辑
 └── README.md
@@ -84,7 +84,7 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 
 ```sh
 # 创建归档集（target-root 写入 t_arcset.current_path）
-packfs arcset make \
+packfs arcset create \
   --target-root=/data/output \
   --name=arcset-001 \
   --dataset-ids=1,2,3
@@ -104,12 +104,12 @@ packfs arcset unpack \
 
 | 子命令 | 参数 | 必填 | 说明 |
 |--------|------|------|------|
-| `make` | `--target-root` | 是 | 输出根目录（写入 current_path） |
+| `create` | `--target-root` | 是 | 输出根目录（写入 current_path） |
 | | `--name` | 是 | arcset 名称 |
 | | `--dataset-ids` | 是 | 关联的 dataset ID，逗号分隔 |
 | | `--format` | 否 | 打包格式 bin/iso/tar（缺省 bin） |
 | | `--shard-max-bytes` | 否 | shard 最大字节数 |
-| | `--compress-algo` | 否 | 压缩算法 zst/xz |
+| | `--compress` | 否 | 压缩配置：`zstd`、`segment:zstd`、`zstd_seekable`、`segment:xz`、`xz` |
 | `gen-def` | `--id` | 是 | arcset ID |
 | | `--target-root` | 是 | shard-def 文件输出目录 |
 | `unpack` | `--source-root` | 是 | shard 文件所在根目录 |

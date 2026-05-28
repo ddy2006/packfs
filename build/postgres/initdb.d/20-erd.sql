@@ -67,31 +67,31 @@ CREATE TABLE "t_shard" (
   "checksum" VARCHAR,
   "metadata" JSONB,
   "last_check" TIMESTAMP,
-  "arcset" INTEGER NOT NULL
+  "arcset" INTEGER NOT NULL,
+  "dataset" INTEGER NOT NULL
 );
 
 CREATE INDEX "idx_t_shard__arcset" ON "t_shard" ("arcset");
 
+CREATE INDEX "idx_t_shard__dataset" ON "t_shard" ("dataset");
+
 ALTER TABLE "t_shard" ADD CONSTRAINT "fk_t_shard__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE CASCADE;
+
+ALTER TABLE "t_shard" ADD CONSTRAINT "fk_t_shard__dataset" FOREIGN KEY ("dataset") REFERENCES "t_dataset" ("id") ON DELETE CASCADE;
 
 CREATE TABLE "t_segment" (
   "id" SERIAL PRIMARY KEY,
   "offset" BIGINT,
   "size" BIGINT,
   "shard" INTEGER NOT NULL,
-  "arcset" INTEGER NOT NULL,
   "file" INTEGER NOT NULL,
   "file_offset" BIGINT,
   "file_size" BIGINT
 );
 
-CREATE INDEX "idx_t_segment__arcset" ON "t_segment" ("arcset");
-
 CREATE INDEX "idx_t_segment__file" ON "t_segment" ("file");
 
 CREATE INDEX "idx_t_segment__shard" ON "t_segment" ("shard");
-
-ALTER TABLE "t_segment" ADD CONSTRAINT "fk_t_segment__arcset" FOREIGN KEY ("arcset") REFERENCES "t_arcset" ("id") ON DELETE CASCADE;
 
 ALTER TABLE "t_segment" ADD CONSTRAINT "fk_t_segment__file" FOREIGN KEY ("file") REFERENCES "t_file" ("id") ON DELETE CASCADE;
 

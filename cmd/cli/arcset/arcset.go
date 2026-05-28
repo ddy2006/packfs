@@ -12,7 +12,7 @@ func Command() *cobra.Command {
 		Short: "Manage arcsets",
 	}
 
-	cmd.AddCommand(makeCmd())
+	cmd.AddCommand(createCmd())
 	cmd.AddCommand(genDefCmd())
 	cmd.AddCommand(unpackCmd())
 	return cmd

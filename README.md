@@ -32,7 +32,7 @@ packfs通过将小文件通过文件系统打包成若个个大文件来减少�
 ### 1. 数据库结构设计
 
 ER图设计如下:
-![ER图](packfs-erd.png)
+![ER图](packfs-erd.svg)
 
 主要实体解释：
 
@@ -59,7 +59,7 @@ mtime     | 最后修改时间
 create_time     | 创建时间
 shard_max_bytes | shard 的最大字节数
 format          | 'bin' / 'iso' / 'tar'，打包格式，缺省 'bin'
-compress_algo   | 'zst' / 'xz' 等，缺省为空（未压缩）
+compress        | 压缩配置，缺省空=不压缩。shard 级省略前缀，segment 级标注 `segment:`。例：`zstd`、`segment:zstd`、`zstd_seekable`、`segment:xz`、`xz`。`segment:*` 和 `zstd_seekable` 支持文件系统挂载
 tape_max_bytes  | 对应磁带的大小（字节数）
 ec              | Erasure Code 参数，例 '8+4'（x+y）
 total_bytes     | 所有 dataset 中原始数据文件的总字节数
@@ -85,7 +85,7 @@ shard_type | 'DATA' / 'EC'，数据 shard 或 EC shard
 packfs dataset create --root-dir=/data/source [--name=my-ds]
 
 # 2) 创建 arcset（关联 dataset）
-packfs arcset make --name=my-arc --target-root=/data/output \
+packfs arcset create --name=my-arc --target-root=/data/output \
   --dataset-ids=1 [--format=bin] [--shard-max-bytes=1073741824]
 
 # 3) 生成 shard 定义文件

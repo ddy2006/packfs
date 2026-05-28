@@ -59,23 +59,23 @@ CREATE TABLE "T_shard" (
   "checksum" VARCHAR,
   "metadata" JSON,
   "last_check" DATETIME,
-  "arcset" INTEGER NOT NULL REFERENCES "T_arcset" ("id") ON DELETE CASCADE
+  "arcset" INTEGER NOT NULL REFERENCES "T_arcset" ("id") ON DELETE CASCADE,
+  "dataset" INTEGER NOT NULL REFERENCES "T_dataset" ("id") ON DELETE CASCADE
 );
 
 CREATE INDEX "idx_t_shard__arcset" ON "T_shard" ("arcset");
+
+CREATE INDEX "idx_t_shard__dataset" ON "T_shard" ("dataset");
 
 CREATE TABLE "T_segment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "offset" BIGINT,
   "size" BIGINT,
   "shard" INTEGER NOT NULL REFERENCES "T_shard" ("id") ON DELETE CASCADE,
-  "arcset" INTEGER NOT NULL REFERENCES "T_arcset" ("id") ON DELETE CASCADE,
   "file" INTEGER NOT NULL REFERENCES "T_file" ("id") ON DELETE CASCADE,
   "file_offset" BIGINT,
   "file_size" BIGINT
 );
-
-CREATE INDEX "idx_t_segment__arcset" ON "T_segment" ("arcset");
 
 CREATE INDEX "idx_t_segment__file" ON "T_segment" ("file");
 

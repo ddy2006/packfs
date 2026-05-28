@@ -80,6 +80,13 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 	defer out.Close()
 
 	shardStore := shard.NewSQLiteStore(sqlDB)
+	type segInfo struct {
+		offset   int64
+		size     int64
+		fileID   int
+		fileSize int64
+	}
+	var segInfos []segInfo
 	var totalSize int64
 	shardHash := sha256.New()
 	mw := io.MultiWriter(out, shardHash)
@@ -91,11 +98,12 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 		}
 
 		// 校验文件大小是否与 DB 记录一致
+		var fileID int
+		var dbSize int64
+		_ = sqlDB.QueryRowContext(context.Background(),
+			`SELECT id, file_size FROM t_file WHERE file_path = ? AND dataset = ?`,
+			seg.Path, meta.DatasetID).Scan(&fileID, &dbSize)
 		if info, err := os.Stat(srcPath); err == nil {
-			var dbSize int64
-			_ = sqlDB.QueryRowContext(context.Background(),
-				`SELECT file_size FROM t_file WHERE file_path = ? AND dataset = ?`,
-				seg.Path, meta.DatasetID).Scan(&dbSize)
 			if dbSize > 0 && info.Size() != dbSize {
 				logrus.Warnf("%s: size changed since dataset creation (db=%d, disk=%d)",
 					seg.Path, dbSize, info.Size())
@@ -114,6 +122,7 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 			}
 		}
 
+		offset := totalSize
 		if seg.Size <= 0 {
 			n, err := io.Copy(mw, f)
 			f.Close()
@@ -121,6 +130,7 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 				return errors.WrapE(err, "copy file", "path", seg.Path)
 			}
 			totalSize += n
+			segInfos = append(segInfos, segInfo{offset: offset, size: n, fileID: fileID, fileSize: dbSize})
 		} else {
 			n, err := io.CopyN(mw, f, seg.Size)
 			f.Close()
@@ -128,6 +138,7 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 				return errors.WrapE(err, "copy segment", "path", seg.Path)
 			}
 			totalSize += n
+			segInfos = append(segInfos, segInfo{offset: offset, size: n, fileID: fileID, fileSize: dbSize})
 		}
 	}
 
@@ -140,11 +151,28 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 		Type:     "DATA",
 		Checksum: shardChecksum,
 		Arcset:   meta.ArcsetID,
+		Dataset:  meta.DatasetID,
 	}
 	if err := shardStore.CreateShard(context.Background(), sh); err != nil {
 		return err
 	}
 
-	fmt.Printf("created shard %s (%d bytes, sha256=%s)\n", outPath, totalSize, shardChecksum)
+	// 写入 t_segment 记录
+	var segments []*shard.Segment
+	for _, si := range segInfos {
+		segments = append(segments, &shard.Segment{
+			Offset:     si.offset,
+			Size:       si.size,
+			Shard:      sh.ID,
+			File:       si.fileID,
+			FileOffset: 0,
+			FileSize:   si.fileSize,
+		})
+	}
+	if err := shardStore.ReplaceSegments(context.Background(), sh.ID, segments); err != nil {
+		return err
+	}
+
+	fmt.Printf("created shard %s (%d bytes, sha256=%s, %d segments)\n", outPath, totalSize, shardChecksum, len(segInfos))
 	return nil
 }

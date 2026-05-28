@@ -29,14 +29,16 @@ func setupDB(t *testing.T) *sql.DB {
 		checksum VARCHAR,
 		metadata JSON,
 		last_check DATETIME,
-		arcset INTEGER NOT NULL REFERENCES t_arcset(id) ON DELETE CASCADE
+		arcset INTEGER NOT NULL,
+		dataset INTEGER NOT NULL
 	);
+	CREATE UNIQUE INDEX idx_t_shard__arcset_dataset_file_path
+		ON t_shard (arcset, dataset, file_path);
 	CREATE TABLE t_segment (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		offset BIGINT,
 		size BIGINT,
 		shard INTEGER NOT NULL REFERENCES t_shard(id) ON DELETE CASCADE,
-		arcset INTEGER NOT NULL,
 		file INTEGER NOT NULL,
 		file_offset BIGINT,
 		file_size BIGINT
@@ -65,7 +67,7 @@ func TestCreateShard(t *testing.T) {
 	}
 
 	outputDir := t.TempDir()
-	err := shard.CreateShard(ctx, store, descs, 1, 0, outputDir, "DATA")
+	err := shard.CreateShard(ctx, store, descs, 1, 1, 0, outputDir, "DATA")
 	if err != nil {
 		t.Fatalf("CreateShard: %v", err)
 	}
@@ -88,6 +90,9 @@ func TestCreateShard(t *testing.T) {
 	}
 	if shards[0].FileSize != int64(len(data)) {
 		t.Errorf("FileSize: got %d, want %d", shards[0].FileSize, len(data))
+	}
+	if shards[0].Dataset != 1 {
+		t.Errorf("Dataset: got %d, want 1", shards[0].Dataset)
 	}
 	if shards[0].Checksum == "" {
 		t.Error("expected non-empty shard checksum")
@@ -113,7 +118,7 @@ func TestCreateShardMultipleSegments(t *testing.T) {
 	}
 
 	outputDir := t.TempDir()
-	err := shard.CreateShard(ctx, store, descs, 2, 1, outputDir, "DATA")
+	err := shard.CreateShard(ctx, store, descs, 2, 2, 1, outputDir, "DATA")
 	if err != nil {
 		t.Fatalf("CreateShard: %v", err)
 	}

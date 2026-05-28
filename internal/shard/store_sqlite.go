@@ -19,31 +19,56 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore { return &SQLiteStore{DB: db} }
 
 func (s *SQLiteStore) CreateShard(ctx context.Context, sh *Shard) error {
 	metadataJSON, _ := json.Marshal(sh.Metadata)
-	result, err := s.DB.ExecContext(ctx,
-		`INSERT INTO t_shard (seq, file_path, file_size, type, checksum, metadata, last_check, arcset)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO t_shard (seq, file_path, file_size, type, checksum, metadata, last_check, arcset, dataset)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(arcset, dataset, file_path)
+		 DO UPDATE SET seq=excluded.seq, file_size=excluded.file_size, type=excluded.type,
+		               checksum=excluded.checksum, metadata=excluded.metadata,
+		               last_check=excluded.last_check`,
 		sh.Seq, sh.FilePath, sh.FileSize, sh.Type, sh.Checksum,
-		string(metadataJSON), sh.LastCheck, sh.Arcset)
+		string(metadataJSON), sh.LastCheck, sh.Arcset, sh.Dataset)
 	if err != nil {
-		return errors.WrapE(err, "create shard", "file_path", sh.FilePath)
+		return errors.WrapE(err, "upsert shard", "file_path", sh.FilePath)
 	}
-	id, _ := result.LastInsertId()
-	sh.ID = int(id)
+
+	row := s.DB.QueryRowContext(ctx,
+		`SELECT id FROM t_shard WHERE arcset = ? AND dataset = ? AND file_path = ?`,
+		sh.Arcset, sh.Dataset, sh.FilePath)
+	if err := row.Scan(&sh.ID); err != nil {
+		return errors.WrapE(err, "query shard id after upsert")
+	}
 	return nil
 }
 
-func (s *SQLiteStore) AddSegment(ctx context.Context, seg *Segment) error {
-	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO t_segment (offset, size, shard, arcset, file, file_offset, file_size)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		seg.Offset, seg.Size, seg.Shard, seg.Arcset, seg.File, seg.FileOffset, seg.FileSize)
-	return errors.WrapE(err, "add segment", "shard_id", seg.Shard)
+func (s *SQLiteStore) ReplaceSegments(ctx context.Context, shardID int, segs []*Segment) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.WrapE(err, "begin tx for replace segments")
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM t_segment WHERE shard = ?`, shardID); err != nil {
+		return errors.WrapE(err, "delete old segments", "shard_id", shardID)
+	}
+
+	for _, seg := range segs {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO t_segment (offset, size, shard, file, file_offset, file_size)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			seg.Offset, seg.Size, shardID, seg.File, seg.FileOffset, seg.FileSize)
+		if err != nil {
+			return errors.WrapE(err, "insert segment")
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard, error) {
 	query := `SELECT id, COALESCE(seq,0), file_path, COALESCE(file_size,0), COALESCE(type,''),
 	           COALESCE(checksum,''), COALESCE(metadata,'{}'),
-	           COALESCE(last_check,''), arcset
+	           COALESCE(last_check,''), arcset, dataset
 	           FROM t_shard WHERE arcset = ? ORDER BY seq`
 	rows, err := s.DB.QueryContext(ctx, query, arcsetID)
 	if err != nil {
@@ -56,7 +81,8 @@ func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard,
 		sh := &Shard{}
 		var metadataBytes []byte
 		var lastCheck string
-		if err := rows.Scan(&sh.ID, &sh.Seq, &sh.FilePath, &sh.FileSize, &sh.Type, &sh.Checksum, &metadataBytes, &lastCheck, &sh.Arcset); err != nil {
+		if err := rows.Scan(&sh.ID, &sh.Seq, &sh.FilePath, &sh.FileSize, &sh.Type,
+			&sh.Checksum, &metadataBytes, &lastCheck, &sh.Arcset, &sh.Dataset); err != nil {
 			return nil, errors.WrapE(err, "scan shard row")
 		}
 		if lastCheck != "" {
@@ -78,14 +104,14 @@ func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard,
 func (s *SQLiteStore) FindByFilePath(ctx context.Context, filePath string) (*Shard, error) {
 	query := `SELECT id, COALESCE(seq,0), file_path, COALESCE(file_size,0), COALESCE(type,''),
 	           COALESCE(checksum,''), COALESCE(metadata,'{}'),
-	           COALESCE(last_check,''), arcset
+	           COALESCE(last_check,''), arcset, dataset
 	           FROM t_shard WHERE file_path = ?`
 	sh := &Shard{}
 	var metadataBytes []byte
 	var lastCheck string
 	err := s.DB.QueryRowContext(ctx, query, filePath).Scan(
 		&sh.ID, &sh.Seq, &sh.FilePath, &sh.FileSize, &sh.Type, &sh.Checksum,
-		&metadataBytes, &lastCheck, &sh.Arcset)
+		&metadataBytes, &lastCheck, &sh.Arcset, &sh.Dataset)
 	if err == sql.ErrNoRows {
 		return nil, errors.E("shard not found", "file_path", filePath)
 	}

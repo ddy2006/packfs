@@ -19,7 +19,7 @@ func CreateShard(
 	ctx context.Context,
 	store Store,
 	descs []arcset.SegmentDesc,
-	arcsetID int,
+	arcsetID, datasetID int,
 	seq int,
 	outputDir string,
 	shardType string,
@@ -55,7 +55,6 @@ func CreateShard(
 			seg: &Segment{
 				Offset:     shardSize,
 				Size:       n,
-				Arcset:     arcsetID,
 				File:       desc.FileID,
 				FileOffset: desc.FileOffset,
 				FileSize:   desc.FileSize,
@@ -75,16 +74,18 @@ func CreateShard(
 		Checksum:  shardChecksum,
 		LastCheck: time.Now(),
 		Arcset:    arcsetID,
+		Dataset:   datasetID,
 	}
 	if err := store.CreateShard(ctx, sh); err != nil {
 		return err
 	}
 
+	var segs []*Segment
 	for _, p := range pendings {
-		p.seg.Shard = sh.ID
-		if err := store.AddSegment(ctx, p.seg); err != nil {
-			return err
-		}
+		segs = append(segs, p.seg)
+	}
+	if err := store.ReplaceSegments(ctx, sh.ID, segs); err != nil {
+		return err
 	}
 
 	logrus.Infof("created shard %s with %d segments (%d bytes)", shardAbsPath, len(descs), shardSize)

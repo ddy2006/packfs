@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func makeCmd() *cobra.Command {
+func createCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "make",
-		Short: "Make arcset",
+		Use:   "create",
+		Short: "Create arcset",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
@@ -42,7 +42,7 @@ func makeCmd() *cobra.Command {
 				format = "bin"
 			}
 			shardMaxBytes, _ := cmd.Flags().GetInt64("shard-max-bytes")
-			compressAlgo, _ := cmd.Flags().GetString("compress-algo")
+			compress, _ := cmd.Flags().GetString("compress")
 
 			metadata := map[string]any{
 				"format":    format,
@@ -50,8 +50,8 @@ func makeCmd() *cobra.Command {
 			if shardMaxBytes > 0 {
 				metadata["shard_max_bytes"] = shardMaxBytes
 			}
-			if compressAlgo != "" {
-				metadata["compress_algo"] = compressAlgo
+			if compress != "" {
+				metadata["compress"] = compress
 			}
 
 			sqlDB, err := db.OpenSQLite()
@@ -74,7 +74,7 @@ func makeCmd() *cobra.Command {
 	cmd.Flags().String("dataset-ids", "", "comma-separated dataset IDs")
 	cmd.Flags().String("format", "bin", "pack format: bin/iso/tar")
 	cmd.Flags().Int64("shard-max-bytes", 0, "max shard size in bytes")
-	cmd.Flags().String("compress-algo", "", "compression algorithm: zst/xz")
+	cmd.Flags().String("compress", "", "compression: zstd, segment:zstd, segment:xz, zstd_seekable, xz")
 	return cmd
 }
 

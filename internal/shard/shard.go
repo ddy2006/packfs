@@ -13,6 +13,7 @@ type Shard struct {
 	Metadata  map[string]any
 	LastCheck time.Time
 	Arcset    int
+	Dataset   int
 }
 
 // UnpackInfo is a segment position + original file path, used for unpacking.
@@ -28,7 +29,6 @@ type Segment struct {
 	Offset     int64
 	Size       int64
 	Shard      int
-	Arcset     int
 	File       int
 	FileOffset int64
 	FileSize   int64
