@@ -1,6 +1,7 @@
 package shard
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -62,6 +63,14 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 	}
 
 	compress, _ := a.Metadata["compress"].(string)
+	format, _ := a.Metadata["format"].(string)
+	if format == "" {
+		format = "bin"
+	}
+	if format == "tar" {
+		return doMakeTarShard(sqlDB, a, meta, segs, defFile)
+	}
+
 	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
 	isShardCompress := (compress == "zstd" || compress == "xz") && !isSegmentCompress
 	isXZ := compress == "xz" || compress == "segment:xz"
@@ -195,6 +204,173 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 	shardChecksum := fmt.Sprintf("%x", shardHash.Sum(nil))
 
 	relPath := filepath.Base(outPath)
+	sh := &shard.Shard{
+		FilePath: relPath,
+		FileSize: shardFileSize,
+		Type:     "DATA",
+		Checksum: shardChecksum,
+		Arcset:   meta.ArcsetID,
+		Dataset:  meta.DatasetID,
+	}
+	if err := shardStore.CreateShard(context.Background(), sh); err != nil {
+		return err
+	}
+
+	var segments []*shard.Segment
+	for _, si := range segInfos {
+		segments = append(segments, &shard.Segment{
+			Offset:     si.offset,
+			Size:       si.size,
+			Csize:      si.csize,
+			Shard:      sh.ID,
+			File:       si.fileID,
+			FileOffset: 0,
+			FileSize:   si.fileSize,
+		})
+	}
+	if err := shardStore.ReplaceSegments(context.Background(), sh.ID, segments); err != nil {
+		return err
+	}
+
+	fmt.Printf("created shard %s (%d bytes, sha256=%s, %d segments)\n", outPath, shardFileSize, shardChecksum, len(segInfos))
+	return nil
+}
+
+func doMakeTarShard(sqlDB *sql.DB, a *arcset.Arcset, meta shard.DefFileMeta, segs []shard.SegmentDef, defFile string) error {
+	compress, _ := a.Metadata["compress"].(string)
+	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
+	isShardCompress := (compress == "zstd" || compress == "xz") && !isSegmentCompress
+	isXZ := compress == "xz" || compress == "segment:xz"
+
+	targetRoot := a.CurrentPath
+	outName := defFile[:len(defFile)-4]
+	outPath := filepath.Join(targetRoot, filepath.Base(outName))
+
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		return errors.WrapE(err, "create output directory")
+	}
+
+	sourceRoot, err := arcset.NewSQLiteStore(sqlDB).FindDatasetPath(context.Background(), meta.DatasetID)
+	if err != nil {
+		return errors.WrapE(err, "find dataset path")
+	}
+
+	type segInfo struct {
+		offset   int64
+		size     int64
+		csize    int64
+		fileID   int
+		fileSize int64
+	}
+	var segInfos []segInfo
+	shardHash := sha256.New()
+
+	// Build tar archive in buffer to compute offsets.
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+
+	for _, seg := range segs {
+		srcPath := seg.Path
+		if !filepath.IsAbs(srcPath) {
+			srcPath = filepath.Join(sourceRoot, seg.Path)
+		}
+
+		var fileID int
+		var dbSize int64
+		_ = sqlDB.QueryRowContext(context.Background(),
+			`SELECT id, file_size FROM t_file WHERE file_path = ? AND dataset = ?`,
+			seg.Path, meta.DatasetID).Scan(&fileID, &dbSize)
+		if info, err := os.Stat(srcPath); err == nil {
+			if dbSize > 0 && info.Size() != dbSize {
+				logrus.Warnf("%s: size changed since dataset creation (db=%d, disk=%d)",
+					seg.Path, dbSize, info.Size())
+			}
+		}
+
+		f, err := os.Open(srcPath)
+		if err != nil {
+			return errors.WrapE(err, "open source file", "path", seg.Path)
+		}
+
+		var rawData []byte
+		if seg.Size <= 0 {
+			rawData, err = io.ReadAll(f)
+		} else {
+			rawData = make([]byte, seg.Size)
+			_, err = io.ReadFull(f, rawData)
+		}
+		f.Close()
+		if err != nil {
+			return errors.WrapE(err, "read source file", "path", seg.Path)
+		}
+
+		writeData := rawData
+		var csize int64
+		if isSegmentCompress {
+			writeData, err = compressBytes(rawData, isXZ)
+			if err != nil {
+				return errors.WrapE(err, "compress segment", "path", seg.Path)
+			}
+			csize = int64(len(writeData))
+		}
+
+		offset := int64(tarBuf.Len())
+		hdr := &tar.Header{
+			Name: seg.Path,
+			Size: int64(len(writeData)),
+			Mode: 0644,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return errors.WrapE(err, "write tar header", "path", seg.Path)
+		}
+		if _, err := tw.Write(writeData); err != nil {
+			return errors.WrapE(err, "write tar entry", "path", seg.Path)
+		}
+
+		segInfos = append(segInfos, segInfo{
+			offset:   offset,
+			size:     int64(len(rawData)),
+			csize:    csize,
+			fileID:   fileID,
+			fileSize: dbSize,
+		})
+	}
+
+	if err := tw.Close(); err != nil {
+		return errors.WrapE(err, "close tar writer")
+	}
+
+	tarData := tarBuf.Bytes()
+	var shardFileSize int64
+
+	out, err := os.Create(outPath)
+	if err != nil {
+		return errors.WrapE(err, "create shard file", "path", outPath)
+	}
+	defer out.Close()
+
+	if isShardCompress {
+		compressed, err := compressBytes(tarData, isXZ)
+		if err != nil {
+			return errors.WrapE(err, "compress shard")
+		}
+		if _, err := out.Write(compressed); err != nil {
+			return errors.WrapE(err, "write compressed shard")
+		}
+		shardHash.Write(compressed)
+		shardFileSize = int64(len(compressed))
+	} else {
+		if _, err := out.Write(tarData); err != nil {
+			return errors.WrapE(err, "write shard")
+		}
+		shardHash.Write(tarData)
+		shardFileSize = int64(len(tarData))
+	}
+
+	shardChecksum := fmt.Sprintf("%x", shardHash.Sum(nil))
+
+	relPath := filepath.Base(outPath)
+	shardStore := shard.NewSQLiteStore(sqlDB)
 	sh := &shard.Shard{
 		FilePath: relPath,
 		FileSize: shardFileSize,

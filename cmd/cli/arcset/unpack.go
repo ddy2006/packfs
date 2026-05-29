@@ -1,6 +1,7 @@
 package arcset
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -54,10 +55,14 @@ func unpackCmd() *cobra.Command {
 			}
 
 			compress, _ := a.Metadata["compress"].(string)
+			format, _ := a.Metadata["format"].(string)
+			if format == "" {
+				format = "bin"
+			}
 			var totalFiles int
 			for _, sh := range shards {
 				shardAbsPath := filepath.Join(sourceRoot, sh.FilePath)
-				count, err := unpackShardFile(shardStore, sh.ID, shardAbsPath, targetRoot, compress)
+				count, err := unpackShardFile(shardStore, sh.ID, shardAbsPath, targetRoot, compress, format)
 				if err != nil {
 					return errors.WrapE(err, "unpack shard", "path", sh.FilePath)
 				}
@@ -76,7 +81,7 @@ func unpackCmd() *cobra.Command {
 	return cmd
 }
 
-func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, targetRoot, compress string) (int, error) {
+func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
 	infos, err := shardStore.ListUnpackInfo(context.Background(), shardID)
 	if err != nil {
 		return 0, err
@@ -88,7 +93,56 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 	}
 
 	isShardCompress := compress == "zstd" || compress == "xz"
+	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
 	isXZ := compress == "xz" || compress == "segment:xz"
+
+	if format == "tar" {
+		var data []byte = src
+		if isShardCompress {
+			data, err = decompressAll(src, isXZ)
+			if err != nil {
+				return 0, errors.WrapE(err, "decompress shard")
+			}
+		}
+
+		tr := tar.NewReader(bytes.NewReader(data))
+		count := 0
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return 0, errors.WrapE(err, "read tar entry")
+			}
+			if hdr.Typeflag != tar.TypeReg {
+				continue
+			}
+
+			outPath := filepath.Join(targetRoot, hdr.Name)
+			if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+				return 0, err
+			}
+
+			content, err := io.ReadAll(tr)
+			if err != nil {
+				return 0, errors.WrapE(err, "read tar entry data", "name", hdr.Name)
+			}
+
+			if isSegmentCompress {
+				content, err = decompressAll(content, isXZ)
+				if err != nil {
+					return 0, errors.WrapE(err, "decompress segment", "file", hdr.Name)
+				}
+			}
+
+			if err := os.WriteFile(outPath, content, os.FileMode(hdr.Mode)); err != nil {
+				return 0, errors.WrapE(err, "create output file", "path", outPath)
+			}
+			count++
+		}
+		return count, nil
+	}
 
 	var decompressed []byte
 	if isShardCompress {

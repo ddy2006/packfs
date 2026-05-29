@@ -51,8 +51,11 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 | 示例 | compress | 说明 |
 |------|----------|------|
 | `0000.bin.def` | 无 | 二进制拼接，不压缩 |
+| `0000.tar.def` | 无 | tar 归档，不压缩 |
 | `0001.bin.zst.def` | `zstd`/`xz` | 先拼 .bin 再整体压缩（shard 级） |
+| `0001.tar.zst.def` | `zstd`/`xz` | tar 归档后再整体压缩（shard 级） |
 | `0002.zst.bin.def` | `segment:zstd`/`segment:xz` | 每段先压缩，再拼接（segment 级） |
+| `0002.zst.tar.def` | `segment:zstd`/`segment:xz` | 每段先压缩，再写入 tar（segment 级） |
 
 ### 内容格式
 

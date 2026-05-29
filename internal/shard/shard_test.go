@@ -1,8 +1,11 @@
 package shard_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,5 +132,97 @@ func TestCreateShardMultipleSegments(t *testing.T) {
 	expected := string(dataA) + string(dataB)
 	if string(got) != expected {
 		t.Errorf("shard content: got %q, want %q", string(got), expected)
+	}
+}
+
+func TestTarShardRoundtrip(t *testing.T) {
+	db := setupDB(t)
+	store := shard.NewSQLiteStore(db)
+	ctx := context.Background()
+
+	entries := []struct {
+		name string
+		data []byte
+	}{
+		{"a.txt", []byte("hello")},
+		{"sub/b.txt", []byte("world")},
+	}
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	for _, e := range entries {
+		hdr := &tar.Header{
+			Name: e.name,
+			Size: int64(len(e.data)),
+			Mode: 0644,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := tw.Write(e.data); err != nil {
+			t.Fatalf("write tar entry: %v", err)
+		}
+	}
+	tw.Close()
+
+	outputDir := t.TempDir()
+	shardPath := filepath.Join(outputDir, "0000.tar")
+	if err := os.WriteFile(shardPath, tarBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("write shard: %v", err)
+	}
+
+	sh := &shard.Shard{
+		FilePath: "0000.tar",
+		FileSize: int64(len(tarBuf.Bytes())),
+		Type:     "DATA",
+		Checksum: "dummy",
+		Arcset:   1,
+		Dataset:  1,
+	}
+	if err := store.CreateShard(ctx, sh); err != nil {
+		t.Fatalf("CreateShard: %v", err)
+	}
+	segs := []*shard.Segment{
+		{Offset: 0, Size: int64(len(entries[0].data)), Shard: sh.ID, File: 1},
+		{Offset: 512, Size: int64(len(entries[1].data)), Shard: sh.ID, File: 2},
+	}
+	if err := store.ReplaceSegments(ctx, sh.ID, segs); err != nil {
+		t.Fatalf("ReplaceSegments: %v", err)
+	}
+
+	raw, err := os.ReadFile(shardPath)
+	if err != nil {
+		t.Fatalf("read shard: %v", err)
+	}
+	tr := tar.NewReader(bytes.NewReader(raw))
+	var gotEntries []struct {
+		name string
+		data []byte
+	}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar: %v", err)
+		}
+		content, _ := io.ReadAll(tr)
+		gotEntries = append(gotEntries, struct {
+			name string
+			data []byte
+		}{hdr.Name, content})
+	}
+
+	if len(gotEntries) != len(entries) {
+		t.Fatalf("expected %d entries, got %d", len(entries), len(gotEntries))
+	}
+	for i := range entries {
+		if gotEntries[i].name != entries[i].name {
+			t.Errorf("entry %d name: got %q, want %q", i, gotEntries[i].name, entries[i].name)
+		}
+		if string(gotEntries[i].data) != string(entries[i].data) {
+			t.Errorf("entry %d data: got %q, want %q", i, string(gotEntries[i].data), string(entries[i].data))
+		}
 	}
 }

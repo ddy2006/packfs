@@ -80,16 +80,18 @@ func writeDefFile(dir, fileName string, arcsetID, datasetID int, descs []arcset.
 }
 
 func compressExt(metadata map[string]any) string {
+	format, _ := metadata["format"].(string)
+	if format == "" {
+		format = "bin"
+	}
 	c, _ := metadata["compress"].(string)
 	switch c {
 	case "zstd", "xz", "zstd_seekable":
-		// 先拼成 .bin，再整体压缩 → .bin.zst / .bin.xz
-		return "bin." + algoExt(c)
+		return format + "." + algoExt(c)
 	case "segment:zstd", "segment:xz":
-		// 每个 segment 先压缩，再拼接 → .zst.bin / .xz.bin
-		return algoExt(c) + ".bin"
+		return algoExt(c) + "." + format
 	default:
-		return "bin"
+		return format
 	}
 }
 
