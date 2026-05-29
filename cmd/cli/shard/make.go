@@ -1,6 +1,7 @@
 package shard
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -13,8 +14,10 @@ import (
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
+	"github.com/klauspost/compress/zstd"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/ulikunitz/xz"
 )
 
 func makeCmd() *cobra.Command {
@@ -24,7 +27,7 @@ func makeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			defFile, _ := cmd.Flags().GetString("def-file")
 			if defFile == "" {
-				return errors.E("--def-file is required")
+				return errors.NewUsage("--def-file is required")
 			}
 
 			sqlDB, err := db.OpenSQLite()
@@ -58,16 +61,19 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 		return errors.WrapE(err, "find arcset")
 	}
 
-	// target-root = arcset.current_path
+	compress, _ := a.Metadata["compress"].(string)
+	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
+	isShardCompress := (compress == "zstd" || compress == "xz") && !isSegmentCompress
+	isXZ := compress == "xz" || compress == "segment:xz"
+
 	targetRoot := a.CurrentPath
-	outName := defFile[:len(defFile)-4] // strip ".def"
+	outName := defFile[:len(defFile)-4]
 	outPath := filepath.Join(targetRoot, filepath.Base(outName))
 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		return errors.WrapE(err, "create output directory")
 	}
 
-	// source-root = dataset.current_path
 	sourceRoot, err := arcStore.FindDatasetPath(context.Background(), meta.DatasetID)
 	if err != nil {
 		return errors.WrapE(err, "find dataset path")
@@ -83,13 +89,21 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 	type segInfo struct {
 		offset   int64
 		size     int64
+		csize    int64
 		fileID   int
 		fileSize int64
 	}
 	var segInfos []segInfo
 	var totalSize int64
 	shardHash := sha256.New()
-	mw := io.MultiWriter(out, shardHash)
+
+	var shardCompressor io.WriteCloser
+	if isShardCompress {
+		shardCompressor, err = newCompressor(out, isXZ)
+		if err != nil {
+			return err
+		}
+	}
 
 	for _, seg := range segs {
 		srcPath := seg.Path
@@ -97,7 +111,6 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 			srcPath = filepath.Join(sourceRoot, seg.Path)
 		}
 
-		// 校验文件大小是否与 DB 记录一致
 		var fileID int
 		var dbSize int64
 		_ = sqlDB.QueryRowContext(context.Background(),
@@ -122,24 +135,61 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 			}
 		}
 
-		offset := totalSize
+		var rawData []byte
 		if seg.Size <= 0 {
-			n, err := io.Copy(mw, f)
-			f.Close()
-			if err != nil {
-				return errors.WrapE(err, "copy file", "path", seg.Path)
-			}
-			totalSize += n
-			segInfos = append(segInfos, segInfo{offset: offset, size: n, fileID: fileID, fileSize: dbSize})
+			rawData, err = io.ReadAll(f)
 		} else {
-			n, err := io.CopyN(mw, f, seg.Size)
-			f.Close()
-			if err != nil && err != io.EOF {
-				return errors.WrapE(err, "copy segment", "path", seg.Path)
-			}
-			totalSize += n
-			segInfos = append(segInfos, segInfo{offset: offset, size: n, fileID: fileID, fileSize: dbSize})
+			rawData = make([]byte, seg.Size)
+			_, err = io.ReadFull(f, rawData)
 		}
+		f.Close()
+		if err != nil {
+			return errors.WrapE(err, "read source file", "path", seg.Path)
+		}
+
+		offset := totalSize
+		writeData := rawData
+		var csize int64
+
+		if isSegmentCompress {
+			writeData, err = compressBytes(rawData, isXZ)
+			if err != nil {
+				return errors.WrapE(err, "compress segment", "path", seg.Path)
+			}
+			csize = int64(len(writeData))
+		}
+
+		if isShardCompress {
+			shardCompressor.Write(rawData)
+			totalSize += int64(len(rawData))
+		} else {
+			out.Write(writeData)
+			shardHash.Write(writeData)
+			totalSize += int64(len(writeData))
+		}
+
+		segInfos = append(segInfos, segInfo{
+			offset:   offset,
+			size:     int64(len(rawData)),
+			csize:    csize,
+			fileID:   fileID,
+			fileSize: dbSize,
+		})
+	}
+
+	shardFileSize := totalSize
+	if isShardCompress {
+		if err := shardCompressor.Close(); err != nil {
+			return errors.WrapE(err, "close compressor")
+		}
+		if _, err := out.Seek(0, io.SeekStart); err != nil {
+			return errors.WrapE(err, "seek shard file for hash")
+		}
+		if _, err := io.Copy(shardHash, out); err != nil {
+			return errors.WrapE(err, "hash compressed shard")
+		}
+		stat, _ := out.Stat()
+		shardFileSize = stat.Size()
 	}
 
 	shardChecksum := fmt.Sprintf("%x", shardHash.Sum(nil))
@@ -147,7 +197,7 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 	relPath := filepath.Base(outPath)
 	sh := &shard.Shard{
 		FilePath: relPath,
-		FileSize: totalSize,
+		FileSize: shardFileSize,
 		Type:     "DATA",
 		Checksum: shardChecksum,
 		Arcset:   meta.ArcsetID,
@@ -157,12 +207,12 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 		return err
 	}
 
-	// 写入 t_segment 记录
 	var segments []*shard.Segment
 	for _, si := range segInfos {
 		segments = append(segments, &shard.Segment{
 			Offset:     si.offset,
 			Size:       si.size,
+			Csize:      si.csize,
 			Shard:      sh.ID,
 			File:       si.fileID,
 			FileOffset: 0,
@@ -173,6 +223,29 @@ func doMakeShard(sqlDB *sql.DB, defFile string) error {
 		return err
 	}
 
-	fmt.Printf("created shard %s (%d bytes, sha256=%s, %d segments)\n", outPath, totalSize, shardChecksum, len(segInfos))
+	fmt.Printf("created shard %s (%d bytes, sha256=%s, %d segments)\n", outPath, shardFileSize, shardChecksum, len(segInfos))
 	return nil
+}
+
+func newCompressor(w io.Writer, isXZ bool) (io.WriteCloser, error) {
+	if isXZ {
+		return xz.NewWriter(w)
+	}
+	return zstd.NewWriter(w)
+}
+
+func compressBytes(data []byte, isXZ bool) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := newCompressor(&buf, isXZ)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(data); err != nil {
+		w.Close()
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

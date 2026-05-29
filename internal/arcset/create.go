@@ -18,7 +18,7 @@ type CreateArcsetParams struct {
 }
 
 // CreateArcset creates an arcset record and links it to the given datasets.
-func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) error {
+func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) (*Arcset, error) {
 	metadata := params.Metadata
 	if metadata == nil {
 		metadata = make(map[string]any)
@@ -36,15 +36,15 @@ func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) e
 	}
 
 	if err := store.Create(ctx, a); err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, dsID := range params.DatasetIDs {
 		if err := store.AddDataset(ctx, a.ID, dsID); err != nil {
-			return errors.WrapE(err, "link dataset", "arcset", a.Name, "dataset_id", dsID)
+			return nil, errors.WrapE(err, "link dataset", "arcset", a.Name, "dataset_id", dsID)
 		}
 	}
 
 	logrus.Infof("created arcset %s with %d datasets", a.Name, len(params.DatasetIDs))
-	return nil
+	return a, nil
 }

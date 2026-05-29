@@ -45,14 +45,14 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 ### 文件名约定
 
 ```
-<4位序号>[.<compress>].<format>.def
+<4位序号>.<格式描述>.def
 ```
 
-| 示例 | 说明 |
-|------|------|
-| `0000.bin.def` | 第 1 个 shard，二进制拼接 |
-| `0001.zst.bin.def` | 第 2 个 shard，zstd 压缩 + 二进制拼接 |
-| `0002.tar.def` | 第 3 个 shard，tar 格式 |
+| 示例 | compress | 说明 |
+|------|----------|------|
+| `0000.bin.def` | 无 | 二进制拼接，不压缩 |
+| `0001.bin.zst.def` | `zstd`/`xz` | 先拼 .bin 再整体压缩（shard 级） |
+| `0002.zst.bin.def` | `segment:zstd`/`segment:xz` | 每段先压缩，再拼接（segment 级） |
 
 ### 内容格式
 

@@ -54,9 +54,9 @@ func (s *SQLiteStore) ReplaceSegments(ctx context.Context, shardID int, segs []*
 
 	for _, seg := range segs {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO t_segment (offset, size, shard, file, file_offset, file_size)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			seg.Offset, seg.Size, shardID, seg.File, seg.FileOffset, seg.FileSize)
+			`INSERT INTO t_segment (offset, size, csize, shard, file, file_offset, file_size)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			seg.Offset, seg.Size, seg.Csize, shardID, seg.File, seg.FileOffset, seg.FileSize)
 		if err != nil {
 			return errors.WrapE(err, "insert segment")
 		}
@@ -133,7 +133,7 @@ func (s *SQLiteStore) FindByArcsetAndFilePath(ctx context.Context, arcsetID int,
 }
 
 func (s *SQLiteStore) ListUnpackInfo(ctx context.Context, shardID int) ([]UnpackInfo, error) {
-	query := `SELECT f.file_path, seg.offset, seg.size
+	query := `SELECT f.file_path, seg.offset, seg.size, COALESCE(seg.csize, 0)
 	           FROM t_segment seg
 	           JOIN t_file f ON f.id = seg.file
 	           WHERE seg.shard = ?
@@ -147,7 +147,7 @@ func (s *SQLiteStore) ListUnpackInfo(ctx context.Context, shardID int) ([]Unpack
 	var infos []UnpackInfo
 	for rows.Next() {
 		var info UnpackInfo
-		if err := rows.Scan(&info.FilePath, &info.Offset, &info.Size); err != nil {
+		if err := rows.Scan(&info.FilePath, &info.Offset, &info.Size, &info.Csize); err != nil {
 			return nil, errors.WrapE(err, "scan unpack info")
 		}
 		infos = append(infos, info)

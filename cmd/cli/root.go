@@ -13,8 +13,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "packfs",
-	Short: "packfs command line tool",
+	Use:          "packfs",
+	Short:        "packfs command line tool",
+	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// initializeEnv(envFile)
 	},
@@ -28,10 +29,8 @@ func executeRoot() int {
 		}
 	}()
 	if err := rootCmd.Execute(); err != nil {
-		// Print the full command that caused the error
 		defer fmt.Fprintf(os.Stderr, "Error executing command: %s\n", getFullCommand())
-		// Check if it's a UsageError
-		if _, ok := err.(*UsageError); ok {
+		if _, ok := err.(*errors.UsageError); ok {
 			rootCmd.Usage()
 			return 1
 		}
@@ -46,20 +45,6 @@ func getFullCommand() string {
 	return os.Args[0] + " " + strings.Join(os.Args[1:], " ")
 }
 
-// UsageError represents an error that should display command usage
-type UsageError struct {
-	msg string
-}
-
-func (e *UsageError) Error() string {
-	return e.msg
-}
-
-// NewUsageError creates a new UsageError
-func NewUsageError(format string, args ...interface{}) *UsageError {
-	return &UsageError{msg: fmt.Sprintf(format, args...)}
-}
-
 var logEntry *logrus.Entry
 
 func init() {
@@ -67,6 +52,7 @@ func init() {
 	if err != nil {
 		level = logrus.InfoLevel
 	}
+	logrus.SetOutput(os.Stderr)
 	logrus.SetLevel(level)
 	logrus.SetReportCaller(true)
 	formatter := &logrus.TextFormatter{

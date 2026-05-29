@@ -84,7 +84,7 @@ func TestCreateArcset(t *testing.T) {
 		Metadata:   map[string]any{"shard_max_bytes": int64(1024), "format": "bin"},
 		DatasetIDs: []int{dsID},
 	}
-	if err := arcset.CreateArcset(ctx, store, params); err != nil {
+	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestFindArcsetByID(t *testing.T) {
 	params := arcset.CreateArcsetParams{
 		Name: "arc2",
 	}
-	if err := arcset.CreateArcset(ctx, store, params); err != nil {
+	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestGenerateShardDefs(t *testing.T) {
 		Metadata:   map[string]any{"shard_max_bytes": int64(1024)},
 		DatasetIDs: []int{dsID},
 	}
-	if err := arcset.CreateArcset(ctx, store, params); err != nil {
+	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestGenerateShardDefsNoLimit(t *testing.T) {
 		Name:       "seg-arc-no",
 		DatasetIDs: []int{dsID},
 	}
-	if err := arcset.CreateArcset(ctx, store, params); err != nil {
+	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
 	}
 
@@ -288,7 +288,7 @@ func TestGenerateShardDefsExactBoundary(t *testing.T) {
 		Metadata:   map[string]any{"shard_max_bytes": int64(10)},
 		DatasetIDs: []int{dsID},
 	}
-	arcset.CreateArcset(ctx, store, params)
+	_, _ = arcset.CreateArcset(ctx, store, params)
 	a, _ := store.FindByName(ctx, "boundary-arc")
 	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
 	if err != nil {
@@ -320,7 +320,7 @@ func TestGenerateShardDefsOverBoundary(t *testing.T) {
 		Metadata:   map[string]any{"shard_max_bytes": int64(10)},
 		DatasetIDs: []int{dsID},
 	}
-	arcset.CreateArcset(ctx, store, params)
+	_, _ = arcset.CreateArcset(ctx, store, params)
 	a, _ := store.FindByName(ctx, "over-arc")
 	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
 	if err != nil {

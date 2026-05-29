@@ -2,6 +2,8 @@ package arcset
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -18,15 +20,15 @@ func createCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
-				return errors.E("--name is required")
+				return errors.NewUsage("--name is required")
 			}
 			targetRoot, _ := cmd.Flags().GetString("target-root")
 			if targetRoot == "" {
-				return errors.E("--target-root is required")
+				return errors.NewUsage("--target-root is required")
 			}
 			dsIDsStr, _ := cmd.Flags().GetString("dataset-ids")
 			if dsIDsStr == "" {
-				return errors.E("--dataset-ids is required")
+				return errors.NewUsage("--dataset-ids is required")
 			}
 
 			dsIDs, err := parseIntList(dsIDsStr)
@@ -34,7 +36,7 @@ func createCmd() *cobra.Command {
 				return errors.WrapE(err, "parse dataset-ids")
 			}
 			if len(dsIDs) == 0 {
-				return errors.E("--dataset-ids must contain at least one ID")
+				return errors.NewUsage("--dataset-ids must contain at least one ID")
 			}
 
 			format, _ := cmd.Flags().GetString("format")
@@ -45,7 +47,7 @@ func createCmd() *cobra.Command {
 			compress, _ := cmd.Flags().GetString("compress")
 
 			metadata := map[string]any{
-				"format":    format,
+				"format": format,
 			}
 			if shardMaxBytes > 0 {
 				metadata["shard_max_bytes"] = shardMaxBytes
@@ -61,12 +63,17 @@ func createCmd() *cobra.Command {
 			defer sqlDB.Close()
 
 			store := arcset.NewSQLiteStore(sqlDB)
-			return arcset.CreateArcset(context.Background(), store, arcset.CreateArcsetParams{
+			a, err := arcset.CreateArcset(context.Background(), store, arcset.CreateArcsetParams{
 				Name:        name,
 				CurrentPath: targetRoot,
 				Metadata:    metadata,
 				DatasetIDs:  dsIDs,
 			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, `{"arcset_id":%d}`+"\n", a.ID)
+			return nil
 		},
 	}
 	cmd.Flags().String("target-root", "", "output directory for shard files")

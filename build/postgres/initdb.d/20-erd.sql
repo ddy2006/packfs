@@ -61,7 +61,7 @@ ALTER TABLE "t_fs_mount" ADD CONSTRAINT "fk_t_fs_mount__arcset" FOREIGN KEY ("ar
 
 CREATE TABLE "t_shard" (
   "id" SERIAL PRIMARY KEY,
-  "seq" SMALLINT,
+  "seq" INTEGER,
   "file_path" TEXT,
   "file_size" BIGINT,
   "type" VARCHAR,
@@ -84,6 +84,7 @@ CREATE TABLE "t_segment" (
   "id" SERIAL PRIMARY KEY,
   "offset" BIGINT,
   "size" BIGINT,
+  "csize" BIGINT,
   "shard" INTEGER NOT NULL,
   "file" INTEGER NOT NULL,
   "file_offset" BIGINT,

@@ -33,9 +33,10 @@ internal/<package>/
 
 ## 技术栈
 
-- 错误处理：`github.com/kaichao/gopkg/errors`（`errors.E` / `errors.WrapE`）
+- 错误处理：`github.com/kaichao/gopkg/errors`（`errors.E` / `errors.WrapE` / `errors.NewUsage`）
 - 日志：`github.com/sirupsen/logrus`
 - SQLite：`github.com/mattn/go-sqlite3`，占位符用 `?`
+- 压缩：`github.com/klauspost/compress/zstd`、`github.com/ulikunitz/xz`
 - schema 嵌入：`internal/db/schema.sql` 通过 `//go:embed` 嵌入
 
 ## 数据库

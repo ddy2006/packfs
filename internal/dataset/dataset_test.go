@@ -185,7 +185,7 @@ func TestCreateFromDir(t *testing.T) {
 		t.Fatalf("write c.txt: %v", err)
 	}
 
-	if err := dataset.CreateFromDir(ctx, store, tmpDir, "from-dir-ds"); err != nil {
+	if _, err := dataset.CreateFromDir(ctx, store, tmpDir, "from-dir-ds"); err != nil {
 		t.Fatalf("CreateFromDir: %v", err)
 	}
 

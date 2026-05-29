@@ -19,11 +19,11 @@ func genDefCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, _ := cmd.Flags().GetInt("id")
 			if id <= 0 {
-				return errors.E("--id is required")
+				return errors.NewUsage("--id is required")
 			}
 			targetRoot, _ := cmd.Flags().GetString("target-root")
 			if targetRoot == "" {
-				return errors.E("--target-root is required")
+				return errors.NewUsage("--target-root is required")
 			}
 
 			sqlDB, err := db.OpenSQLite()
@@ -43,8 +43,9 @@ func genDefCmd() *cobra.Command {
 				return errors.WrapE(err, "generate shard defs")
 			}
 
+			compressExt := compressExt(a.Metadata)
 			for _, sd := range shards {
-				fileName := fmt.Sprintf("%04d.bin.def", sd.Seq)
+				fileName := fmt.Sprintf("%04d.%s.def", sd.Seq, compressExt)
 				if err := writeDefFile(targetRoot, fileName, a.ID, sd.DatasetID, sd.Segments); err != nil {
 					return errors.WrapE(err, "write def file")
 				}
@@ -76,4 +77,29 @@ func writeDefFile(dir, fileName string, arcsetID, datasetID int, descs []arcset.
 		fmt.Fprintln(f, d.FilePath)
 	}
 	return nil
+}
+
+func compressExt(metadata map[string]any) string {
+	c, _ := metadata["compress"].(string)
+	switch c {
+	case "zstd", "xz", "zstd_seekable":
+		// 先拼成 .bin，再整体压缩 → .bin.zst / .bin.xz
+		return "bin." + algoExt(c)
+	case "segment:zstd", "segment:xz":
+		// 每个 segment 先压缩，再拼接 → .zst.bin / .xz.bin
+		return algoExt(c) + ".bin"
+	default:
+		return "bin"
+	}
+}
+
+func algoExt(compress string) string {
+	switch compress {
+	case "segment:zstd", "zstd", "zstd_seekable":
+		return "zst"
+	case "segment:xz", "xz":
+		return "xz"
+	default:
+		return ""
+	}
 }

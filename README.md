@@ -85,15 +85,15 @@ data_bytes | 所有 segment 原始字节总和
 # 1) 创建 dataset（递归扫描目录）
 packfs dataset create --root-dir=/data/source [--name=my-ds]
 
-# 2) 创建 arcset（关联 dataset）
+# 2) 创建 arcset（关联 dataset，可选压缩）
 packfs arcset create --name=my-arc --target-root=/data/output \
-  --dataset-ids=1 [--format=bin] [--shard-max-bytes=1073741824]
+  --dataset-ids=1 [--format=bin] [--shard-max-bytes=1073741824] [--compress=zstd]
 
-# 3) 生成 shard 定义文件
+# 3) 生成 shard 定义文件（文件名自动反映压缩模式）
 packfs arcset gen-def --id=1 --target-root=/data/output
 
 # 4) 打包 shard（从 .def 和 DB 自动获取路径）
-packfs shard make --def-file=/data/output/0000.bin.def
+packfs shard make --def-file=/data/output/0000.bin.zst.def
 ```
 
 ### 2. 解包操作

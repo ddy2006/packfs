@@ -14,10 +14,10 @@ import (
 )
 
 // CreateFromDir recursively scans a directory and creates a dataset with file records.
-func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) error {
+func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*Dataset, error) {
 	absPath, err := filepath.Abs(dirPath)
 	if err != nil {
-		return errors.WrapE(err, "resolve absolute path", "dir", dirPath)
+		return nil, errors.WrapE(err, "resolve absolute path", "dir", dirPath)
 	}
 
 	ds := &Dataset{
@@ -25,7 +25,7 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) err
 		CurrentPath: absPath,
 	}
 	if err := store.Create(ctx, ds); err != nil {
-		return err
+		return nil, err
 	}
 
 	var fileCount int
@@ -75,18 +75,18 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) err
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := store.UpdateMetadata(ctx, ds.ID, map[string]any{
 		"num_files":   fileCount,
 		"total_bytes": totalBytes,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 
 	logrus.Infof("created dataset %s with %d files (%d bytes) from %s", dsName, fileCount, totalBytes, absPath)
-	return nil
+	return ds, nil
 }
 
 func fileChecksum(path string) (string, error) {

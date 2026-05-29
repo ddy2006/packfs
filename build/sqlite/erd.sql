@@ -53,7 +53,7 @@ CREATE INDEX "idx_t_fs_mount__arcset" ON "T_fs_mount" ("arcset");
 
 CREATE TABLE "T_shard" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "seq" SMALLINT,
+  "seq" INTEGER,
   "file_path" TEXT,
   "file_size" BIGINT,
   "type" VARCHAR,
@@ -72,6 +72,7 @@ CREATE TABLE "T_segment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "offset" BIGINT,
   "size" BIGINT,
+  "csize" BIGINT,
   "shard" INTEGER NOT NULL REFERENCES "T_shard" ("id") ON DELETE CASCADE,
   "file" INTEGER NOT NULL REFERENCES "T_file" ("id") ON DELETE CASCADE,
   "file_offset" BIGINT,

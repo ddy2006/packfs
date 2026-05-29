@@ -2,6 +2,8 @@ package dataset
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/ddy2006/packfs/internal/dataset"
@@ -17,7 +19,7 @@ func createCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rootDir, _ := cmd.Flags().GetString("root-dir")
 			if rootDir == "" {
-				return errors.E("--root-dir is required")
+				return errors.NewUsage("--root-dir is required")
 			}
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
@@ -31,7 +33,12 @@ func createCmd() *cobra.Command {
 			defer sqlDB.Close()
 
 			store := dataset.NewSQLiteStore(sqlDB)
-			return dataset.CreateFromDir(context.Background(), store, rootDir, name)
+			ds, err := dataset.CreateFromDir(context.Background(), store, rootDir, name)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, `{"dataset_id":%d}`+"\n", ds.ID)
+			return nil
 		},
 	}
 	cmd.Flags().String("root-dir", "", "root directory to scan recursively")

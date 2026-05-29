@@ -44,7 +44,7 @@ SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs
 1. `gen-def` 按 **dataset 为粒度** 分组文件（一个 shard 不跨 dataset）。
 2. 组内文件按顺序累加，超过 `shard_max_bytes` 时关闭当前 shard，新建下一个。
 3. 单个文件不拆分，即使超过 `shard_max_bytes` 也独占一个 shard。
-4. shard 序号从 0 开始，4 位整数命名：`0000.bin.def`。
+4. shard 序号从 0 开始，4 位整数命名。无压缩 `0000.bin.def`，shard 级压缩 `0000.bin.zst.def`，segment 级压缩 `0000.zst.bin.def`。
 
 ## Shard 定义文件（.def）
 
@@ -58,3 +58,4 @@ SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs
 - `# arcset_id` 和 `# dataset_id` 由 `gen-def` 自动写入。
 - `shard make` 据此从 DB 获取输出目录（`t_arcset.current_path`）和源目录（`t_dataset.current_path`），无需手动传 `--source-root` / `--target-root`。
 - `shard make` 打包时校验文件大小与 DB 记录是否一致，不一致输出 warning。
+- 压缩模式从 arcset 的 `metadata["compress"]` 读取，def 文件名中的扩展名仅用于标识。

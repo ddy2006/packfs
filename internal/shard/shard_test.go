@@ -38,6 +38,7 @@ func setupDB(t *testing.T) *sql.DB {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		offset BIGINT,
 		size BIGINT,
+		csize BIGINT,
 		shard INTEGER NOT NULL REFERENCES t_shard(id) ON DELETE CASCADE,
 		file INTEGER NOT NULL,
 		file_offset BIGINT,
