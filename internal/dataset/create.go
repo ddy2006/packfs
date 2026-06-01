@@ -23,6 +23,7 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*D
 	ds := &Dataset{
 		Name:        dsName,
 		CurrentPath: absPath,
+		Status:      "active",
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		return nil, err

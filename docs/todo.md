@@ -1,17 +1,26 @@
-# 待实现功能列表
+# TODO
 
-## 灵活的arcset gen-def格式
+## ✅ 已实现
+
+- dataset create / list
+- arcset create / gen-def / unpack / validate / finalize
+- shard make / unpack / validate（bin 需 --arcset-id）
+- shard 定义文件（.def）：纯路径 + JSON segment
+- 分包：按 dataset 粒度，shard_max_bytes 控制
+- 压缩：zstd / xz / zstd_seekable（shard 级缺省）
+- 状态机：building → complete → ready（arcset）、active → archived（dataset）
+- finalize：校验 → 复制 DB → arcset_id 归一 → 目录自包含
+- 幂等：shard make ON CONFLICT DO UPDATE
+- 文件大小校验：shard make 对比 DB 与实际大小，不一致 warning
+
+## 待实现
+
+### 灵活的 gen-def 格式
 - 按文件数量分组
 - 定制的排序方式
-- 待打包文件的分组
 - 打包文件的文件名定制模板
-- 超过shard-max-bytes的大文件
 
-实例：
-
-
-
-## 性能优化
+### 性能优化
 
 - 打包性能优化
   - 利用本地存储

@@ -162,3 +162,9 @@ func (s *SQLiteStore) scanRow(rows *sql.Rows) (*Dataset, error) {
 	}
 	return ds, nil
 }
+
+func (s *SQLiteStore) UpdateStatus(ctx context.Context, id int, status string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE t_dataset SET status = ? WHERE id = ?`, status, id)
+	return errors.WrapE(err, "update dataset status", "id", id, "status", status)
+}

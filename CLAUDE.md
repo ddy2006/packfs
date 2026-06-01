@@ -31,6 +31,7 @@ dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ─
 |------|------|------|
 | `internal/` | 领域模型 + Store + 业务逻辑 | `internal/CLAUDE.md` |
 | `cmd/cli/` | CLI 适配层 + cobra 命令 | `cmd/cli/README.md`、`cmd/cli/CLAUDE.md` |
+| `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/todo.md` |
 | `build/` | SQL schema（pg/sqlite）、Docker | — |
 
 ## 数据库
@@ -38,6 +39,34 @@ dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ─
 SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs.db`），首次自动建表。支持 PostgreSQL 扩展。
 
 大部分业务字段（create_time, format, shard_max_bytes 等）存在 JSON `metadata` 列中，表结构仅保留 id、name、关联 FK 等核心列。
+
+## 状态机
+
+```
+dataset:   active ──> archived
+              (arcset finalize 后)
+
+arcset:    building ──> complete ──> ready
+              (validate 全过)  (finalize)
+```
+
+- `active`：文件在 `current_path`，可直接访问
+- `archived`：数据已打包到 shard，通过 arcset mount 访问
+- `building`：dataset 已关联，shard 正在生成
+- `complete`：所有 shard 校验通过，数量 ≥ `metadata["shard_count"]`
+- `ready`：已 finalize，DB 已复制，目录自包含
+
+## Finalize
+
+```sh
+packfs arcset finalize --id=1
+```
+
+1. 校验所有 shard checksum
+2. 确认 shard 数量 ≥ `shard_count`
+3. 复制 `SQLITE_DB` → `current_path/packfs.db`
+4. 新 DB：`UPDATE t_arcset SET id=1, current_path='.'`
+5. arcset → `ready`，关联 dataset → `archived`
 
 ## Shard 分组逻辑
 

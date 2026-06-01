@@ -77,6 +77,43 @@ func validateCmd() *cobra.Command {
 			if fail > 0 {
 				return errors.E("validation failed", "ok", ok, "fail", fail)
 			}
+
+			// shard 数量检查
+			meta := a.Metadata
+			if meta == nil {
+				meta = make(map[string]any)
+			}
+			expected := int64(0)
+			if v, ok := meta["shard_count"]; ok {
+				switch n := v.(type) {
+				case float64:
+					expected = int64(n)
+				case int64:
+					expected = n
+				}
+			}
+			actual := int64(len(shards))
+			if expected > 0 {
+				if actual > expected {
+					fmt.Printf("shard_count updated: %d → %d\n", expected, actual)
+					meta["shard_count"] = actual
+					if err := arcStore.Update(context.Background(), a.Name,
+						arcset.Update{Metadata: meta}); err != nil {
+						return errors.WrapE(err, "update shard_count")
+					}
+				} else if actual < expected {
+					return errors.E("shard count below expected",
+						"expected", expected, "actual", actual)
+				}
+			}
+
+			// 标为 complete
+			complete := "complete"
+			if err := arcStore.Update(context.Background(), a.Name,
+				arcset.Update{Status: &complete}); err != nil {
+				return errors.WrapE(err, "update arcset status to complete")
+			}
+
 			return nil
 		},
 	}

@@ -9,8 +9,8 @@ cmd/cli/
 ├── main.go               # 入口，组装 cobra 命令树
 ├── root.go               # package main：rootCmd、日志初始化、错误处理
 ├── dataset/dataset.go    # package dataset：create、list 命令逻辑
-├── arcset/arcset.go      # package arcset：create、gen-def、unpack 命令逻辑
-├── shard/shard.go        # package shard：make、unpack、make-ec、recover 命令逻辑
+├── arcset/arcset.go      # package arcset：create、gen-def、unpack、validate、finalize 命令逻辑
+├── shard/shard.go        # package shard：make、unpack、validate、make-ec、recover 命令逻辑
 ├── fs/fs.go              # package fs：mount、umount、fsck 命令逻辑
 └── README.md
 ```
@@ -96,6 +96,11 @@ packfs arcset create \
 packfs arcset gen-def \
   --id=1 \
   --target-root=/data/output
+# 校验所有 shard checksum
+packfs arcset validate --id=1
+
+# 封存 arcset（校验 → 复制 DB → 归一 ID → 设状态）
+packfs arcset finalize --id=1
 
 # 解包归档集
 packfs arcset unpack \
@@ -119,6 +124,8 @@ packfs arcset unpack \
 | | `--target-root` | 是 | 解包输出根目录 |
 | | `--dataset-id` | 否 | 按 dataset ID 筛选 |
 | | `--dataset-name` | 否 | 按 dataset 名称筛选（支持 regex） |
+| `validate` | `--id` | 是 | arcset ID |
+| `finalize` | `--id` | 是 | arcset ID |
 
 ### shard
 

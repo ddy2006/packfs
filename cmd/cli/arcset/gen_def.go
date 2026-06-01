@@ -51,6 +51,16 @@ func genDefCmd() *cobra.Command {
 				}
 			}
 
+			// 记录预期的 shard 数量
+			if a.Metadata == nil {
+				a.Metadata = make(map[string]any)
+			}
+			a.Metadata["shard_count"] = int64(len(shards))
+			if err := store.Update(context.Background(), a.Name,
+				arcset.Update{Metadata: a.Metadata}); err != nil {
+				return errors.WrapE(err, "update shard_count")
+			}
+
 			fmt.Printf("generated %d shard-def file(s) for arcset %s in %s\n", len(shards), a.Name, targetRoot)
 			return nil
 		},

@@ -32,7 +32,7 @@ func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) (
 		Label:       params.Label,
 		CurrentPath: params.CurrentPath,
 		Metadata:    metadata,
-		Status:      "ON",
+		Status:      "building",
 	}
 
 	if err := store.Create(ctx, a); err != nil {
