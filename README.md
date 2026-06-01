@@ -107,7 +107,10 @@ packfs shard make --def-file=/data/output/0000.bin.zst.def
 ### 2. 解包操作
 
 ```sh
-# 解包单个 shard
+# 解包 tar 格式 shard（自带边界，不需要 --arcset-id，target-root 缺省为当前目录）
+packfs shard unpack --shard-file=/path/to/0000.tar.zst
+
+# 解包 bin 格式 shard（需要 --arcset-id 定位文件边界）
 packfs shard unpack --shard-file=/path/to/0000.bin --target-root=/extract --arcset-id=1
 
 # 解包整个 arcset

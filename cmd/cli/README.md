@@ -127,7 +127,12 @@ packfs arcset unpack \
 packfs shard make \
   --def-file=/absolute/path/to/0000.bin.def
 
-# 解包单个 shard
+# 解包单个 shard（tar 格式自带边界，不需要 --arcset-id）
+packfs shard unpack \
+  --shard-file=/data/0000.tar.zst \
+  [--target-root=/data/extracted]
+
+# 解包 bin 格式 shard（需要 --arcset-id 定位文件边界）
 packfs shard unpack \
   --shard-file=/data/shard_001.bin \
   --target-root=/data/extracted \
@@ -147,8 +152,8 @@ packfs shard recover \
 |--------|------|------|------|
 | `make` | `--def-file` | 是 | shard 定义文件绝对路径（含 `# arcset_id`） |
 | `unpack` | `--shard-file` | 是 | 待解包的 shard 文件 |
-| | `--target-root` | 是 | 解包输出目录 |
-| | `--arcset-id` | 是 | arcset ID（定位 shard 记录） |
+| | `--target-root` | 否 | 解包输出目录（缺省当前目录） |
+| | `--arcset-id` | 否 | arcset ID，bin 格式必填，tar 格式不需要 |
 | `make-ec` | `--def-file` | 是 | EC 定义的 YAML 文件 |
 | `recover` | `--ec-shard-file` | 是 | 用于恢复的 EC shard 文件 |
 | | `--target-root` | 是 | 恢复输出目录 |

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/db"
@@ -28,12 +29,20 @@ func unpackCmd() *cobra.Command {
 				return errors.NewUsage("--shard-file is required")
 			}
 			targetRoot, _ := cmd.Flags().GetString("target-root")
-			if targetRoot == "" {
-				return errors.NewUsage("--target-root is required")
-			}
 			arcsetID, _ := cmd.Flags().GetInt("arcset-id")
+
 			if arcsetID <= 0 {
-				return errors.NewUsage("--arcset-id is required")
+				format := inferFormat(shardFile)
+				if format != "tar" {
+					return errors.NewUsage("--arcset-id is required for non-tar shard files")
+				}
+				compress := inferCompress(shardFile)
+				count, err := unpackTarShard(shardFile, targetRoot, compress)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("unpacked %d files from %s\n", count, shardFile)
+				return nil
 			}
 
 			sqlDB, err := db.OpenSQLite()
@@ -73,9 +82,66 @@ func unpackCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("shard-file", "", "shard file to unpack")
-	cmd.Flags().String("target-root", "", "target root directory")
-	cmd.Flags().Int("arcset-id", 0, "arcset ID")
+	cmd.Flags().String("target-root", ".", "target root directory (default: current directory)")
+	cmd.Flags().Int("arcset-id", 0, "arcset ID (not required for tar format)")
 	return cmd
+}
+
+func unpackTarShard(shardAbsPath, targetRoot, compress string) (int, error) {
+	src, err := os.ReadFile(shardAbsPath)
+	if err != nil {
+		return 0, errors.WrapE(err, "open shard file", "path", shardAbsPath)
+	}
+
+	isShardCompress := compress == "zstd" || compress == "xz"
+	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
+	isXZ := compress == "xz" || compress == "segment:xz"
+
+	var data []byte = src
+	if isShardCompress {
+		data, err = decompressAll(src, isXZ)
+		if err != nil {
+			return 0, errors.WrapE(err, "decompress shard")
+		}
+	}
+
+	tr := tar.NewReader(bytes.NewReader(data))
+	count := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, errors.WrapE(err, "read tar entry")
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		outPath := filepath.Join(targetRoot, hdr.Name)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return 0, err
+		}
+
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			return 0, errors.WrapE(err, "read tar entry data", "name", hdr.Name)
+		}
+
+		if isSegmentCompress {
+			content, err = decompressAll(content, isXZ)
+			if err != nil {
+				return 0, errors.WrapE(err, "decompress segment", "file", hdr.Name)
+			}
+		}
+
+		if err := os.WriteFile(outPath, content, os.FileMode(hdr.Mode)); err != nil {
+			return 0, errors.WrapE(err, "create output file", "path", outPath)
+		}
+		count++
+	}
+	return count, nil
 }
 
 func unpackShardFile(store *shard.SQLiteStore, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
@@ -188,4 +254,33 @@ func decompressAll(data []byte, isXZ bool) ([]byte, error) {
 	}
 	defer r.Close()
 	return io.ReadAll(r)
+}
+
+// inferFormat detects the pack format from the shard filename extension.
+func inferFormat(filename string) string {
+	base := filepath.Base(filename)
+	if strings.Contains(base, ".tar") {
+		return "tar"
+	}
+	return "bin"
+}
+
+// inferCompress detects the compression mode from the shard filename extension.
+func inferCompress(filename string) string {
+	base := filepath.Base(filename)
+	// segment-level: .zst.format or .xz.format
+	if strings.Contains(base, ".zst.tar") || strings.Contains(base, ".zst.bin") {
+		return "segment:zstd"
+	}
+	if strings.Contains(base, ".xz.tar") || strings.Contains(base, ".xz.bin") {
+		return "segment:xz"
+	}
+	// shard-level: format.zst or format.xz
+	if strings.Contains(base, ".tar.zst") || strings.Contains(base, ".bin.zst") {
+		return "zstd"
+	}
+	if strings.Contains(base, ".tar.xz") || strings.Contains(base, ".bin.xz") {
+		return "xz"
+	}
+	return ""
 }
