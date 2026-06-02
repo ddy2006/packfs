@@ -1,0 +1,15 @@
+dataset:
+  name:       1177938016
+  start_ts:   1177940019
+  end_ts:     1177944816
+  ch_start:   133
+  ch_end:     156
+
+shard:
+  group_by:   channel
+  group_size: 40
+  compress:   zstd
+  format:     tar
+
+simulation:
+  file_bytes: 1024

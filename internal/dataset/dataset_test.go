@@ -54,7 +54,7 @@ func TestCreateAndFindByName(t *testing.T) {
 
 	ds := &dataset.Dataset{
 		Name:        "test-ds",
-		CurrentPath: "/data/test",
+		CurrentPath: "/shard-data/test",
 		Label:       "测试数据集",
 	}
 	if err := store.Create(ctx, ds); err != nil {
@@ -96,7 +96,7 @@ func TestFind(t *testing.T) {
 	for _, name := range []string{"b", "a", "c"} {
 		if err := store.Create(ctx, &dataset.Dataset{
 			Name:        name,
-			CurrentPath: "/data/" + name,
+			CurrentPath: "/shard-data/" + name,
 		}); err != nil {
 			t.Fatalf("Create %s: %v", name, err)
 		}
@@ -129,7 +129,7 @@ func TestAddFileRecordAndListFiles(t *testing.T) {
 
 	ds := &dataset.Dataset{
 		Name:        "ds1",
-		CurrentPath: "/data/ds1",
+		CurrentPath: "/shard-data/ds1",
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		t.Fatalf("Create: %v", err)

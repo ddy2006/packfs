@@ -36,11 +36,12 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 
 ### 分包逻辑
 
-- 单个文件不拆分，一个文件 = 一个 segment。
-- 文件名按文件顺序累加写入当前 shard 的 .def。
-- 当加入下一个文件会使当前 shard 总字节数超过 `shard_max_bytes` 时，关闭当前 shard，创建下一个 shard。
+- 单个文件超过 `shard_max_bytes` 时拆分多段；不超时文件保持完整。
+- 文件按顺序累加写入当前 shard 的 .def。
+- 当加入下一个文件（或片段）会使当前 shard 总字节数超过 `shard_max_bytes` 时，关闭当前 shard，创建下一个 shard。
 - 未设置 `shard_max_bytes` 时，所有文件归入一个 shard。
 - shard 文件名用 4 位整数序号：`0000.bin.def`、`0001.bin.def`……
+- 拆分片段在 .def 中用 JSON 格式表示，完整文件用纯路径。
 
 ### 文件名约定
 
@@ -92,10 +93,12 @@ packfs arcset create \
   --name=arcset-001 \
   --dataset-ids=1,2,3
 
-# 生成 shard 定义文件（输出到 target-root/<arcset-name>.bin.def）
-packfs arcset gen-def \
-  --id=1 \
-  --target-root=/data/output
+# 生成 shard 定义文件（内置模式）
+packfs arcset gen-def --id=1 --target-root=/data/output
+
+# 脚本模式（自定义分组）
+packfs arcset gen-def --id=1 --target-root=/data/output --script=./my-gen.sh
+
 # 校验所有 shard checksum
 packfs arcset validate --id=1
 
@@ -120,6 +123,7 @@ packfs arcset unpack \
 | | `--compress` | 否 | 压缩配置：`zstd`、`segment:zstd`、`zstd_seekable`、`segment:xz`、`xz` |
 | `gen-def` | `--id` | 是 | arcset ID |
 | | `--target-root` | 是 | shard-def 文件输出目录 |
+| | `--script` | 否 | 外部脚本路径（接收 --id 和 --target-root） |
 | `unpack` | `--source-root` | 是 | shard 文件所在根目录 |
 | | `--target-root` | 是 | 解包输出根目录 |
 | | `--dataset-id` | 否 | 按 dataset ID 筛选 |

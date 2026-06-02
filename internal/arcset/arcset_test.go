@@ -332,3 +332,75 @@ func TestGenerateShardDefsOverBoundary(t *testing.T) {
 		t.Fatalf("expected 2 shards, got %d", len(shards))
 	}
 }
+
+func TestGenerateShardDefsSplitLargeFile(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	dsID := seedDataset(t, store.DB, "split-ds")
+	// big.dat=3000 > maxBytes=1024, should split into 3 parts
+	// small.dat=500 fits in last chunk's shard?
+	_, err := store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
+		VALUES ('big.dat', 3000, 'abc', ?)`, dsID)
+	if err != nil {
+		t.Fatalf("insert big: %v", err)
+	}
+	_, err = store.DB.Exec(`INSERT INTO t_file (file_path, file_size, sha256, dataset)
+		VALUES ('small.dat', 500, 'def', ?)`, dsID)
+	if err != nil {
+		t.Fatalf("insert small: %v", err)
+	}
+
+	params := arcset.CreateArcsetParams{
+		Name:       "split-arc",
+		Metadata:   map[string]any{"shard_max_bytes": int64(1024)},
+		DatasetIDs: []int{dsID},
+	}
+	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
+		t.Fatalf("CreateArcset: %v", err)
+	}
+
+	a, _ := store.FindByName(ctx, "split-arc")
+	shards, err := arcset.GenerateShardDefs(ctx, store, a.ID)
+	if err != nil {
+		t.Fatalf("GenerateShardDefs: %v", err)
+	}
+
+	// big.dat: 3000 → 3×1024: [0:1024] [1024:2048] [2048:2952=952 bytes]
+	// small.dat: 500 → 952+500=1452 > 1024, so small goes to shard 4
+	if len(shards) != 4 {
+		t.Fatalf("expected 4 shards, got %d", len(shards))
+	}
+
+	if seg := shards[0].Segments[0]; seg.FilePath != "big.dat" || seg.FileOffset != 0 || seg.SegmentSize != 1024 {
+		t.Errorf("shard 0: %+v", seg)
+	}
+	if seg := shards[1].Segments[0]; seg.FilePath != "big.dat" || seg.FileOffset != 1024 || seg.SegmentSize != 1024 {
+		t.Errorf("shard 1: %+v", seg)
+	}
+	if seg := shards[2].Segments[0]; seg.FilePath != "big.dat" || seg.FileOffset != 2048 || seg.SegmentSize != 952 {
+		t.Errorf("shard 2: %+v", seg)
+	}
+	if seg := shards[3].Segments[0]; seg.FilePath != "small.dat" || seg.FileOffset != 0 || seg.SegmentSize != 500 {
+		t.Errorf("shard 3: %+v", seg)
+	}
+
+	// Verify total segments match file sizes
+	totalBig := int64(0)
+	totalSmall := int64(0)
+	for _, sd := range shards {
+		for _, seg := range sd.Segments {
+			if seg.FilePath == "big.dat" {
+				totalBig += seg.SegmentSize
+			} else {
+				totalSmall += seg.SegmentSize
+			}
+		}
+	}
+	if totalBig != 3000 {
+		t.Errorf("total big bytes: %d, want 3000", totalBig)
+	}
+	if totalSmall != 500 {
+		t.Errorf("total small bytes: %d, want 500", totalSmall)
+	}
+}

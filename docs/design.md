@@ -150,12 +150,38 @@ ER 图：![ER 图](../packfs-erd.svg)
 - 一个 shard 不跨多个 dataset
 - 也支持 JSON 行：`{"path":"...","offset":0,"size":1024}`，`offset`/`size` 选填
 
-### 分包逻辑
+### gen-def：双模式
+
+**1. 内置模式**（缺省，数据保存场景）：
+
+```sh
+packfs arcset gen-def --id=1 --target-root=/output
+```
 
 1. 按 dataset 分组
-2. 组内文件按顺序累加，超过 `shard_max_bytes` 时关闭当前 shard
-3. 单个文件不拆分（即使超过 `shard_max_bytes` 也独占一个 shard）
+2. 组内文件按路径排序，累加超过 `shard_max_bytes` 时关闭当前 shard
+3. 单个文件超过 `shard_max_bytes` 时拆分多段，每段一个 segment。不超时文件保持完整
 4. 序号从 0 开始，4 位整数命名
+5. 拆分片段在 .def 中用 JSON 格式表示（`{"path":"...","offset":0,"size":1024}`），完整文件用纯路径
+
+**2. 脚本模式**（自定义分组场景）：
+
+```sh
+packfs arcset gen-def --id=1 --target-root=/output --script=./my-gen.sh
+```
+
+gen-def 执行外部脚本：
+
+```
+./my-gen.sh --id=1 --target-root=/output
+```
+
+- 脚本自行连接 DB（`SQLITE_DB` 环境变量）、查询 `t_file`、生成 .def 文件到 `target-root/`
+- .def 格式需遵守标准：`# arcset_id` + `# dataset_id` 头 + 路径行
+- 脚本 stdout 输出 shard 数量（纯数字），gen-def 据此写入 `metadata["shard_count"]`
+- 脚本退出码 0=成功，非 0=失败
+
+**两种模式最后都执行**：统计 target-root 下的 .def 文件数，写入 `metadata["shard_count"]`。
 
 ## 压缩
 

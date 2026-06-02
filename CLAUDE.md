@@ -72,7 +72,7 @@ packfs arcset finalize --id=1
 
 1. `gen-def` 按 **dataset 为粒度** 分组文件（一个 shard 不跨 dataset）。
 2. 组内文件按顺序累加，超过 `shard_max_bytes` 时关闭当前 shard，新建下一个。
-3. 单个文件不拆分，即使超过 `shard_max_bytes` 也独占一个 shard。
+3. 单个文件超过 `shard_max_bytes` 时拆分多段，不超时文件保持完整。
 4. shard 序号从 0 开始，4 位整数命名。格式由 `metadata["format"]` 和 `metadata["compress"]` 决定：
    - bin, 无压缩: `0000.bin.def`
    - bin, shard 级 zstd: `0000.bin.zst.def`

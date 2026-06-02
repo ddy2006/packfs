@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/kaichao/gopkg/errors"
+	"github.com/kaichao/gopkg/exec"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +28,7 @@ func genDefCmd() *cobra.Command {
 			if targetRoot == "" {
 				return errors.NewUsage("--target-root is required")
 			}
+			script, _ := cmd.Flags().GetString("script")
 
 			sqlDB, err := db.OpenSQLite()
 			if err != nil {
@@ -38,35 +42,58 @@ func genDefCmd() *cobra.Command {
 				return errors.WrapE(err, "find arcset")
 			}
 
-			shards, err := arcset.GenerateShardDefs(context.Background(), store, a.ID)
-			if err != nil {
-				return errors.WrapE(err, "generate shard defs")
-			}
+			var shardCount int64
 
-			compressExt := compressExt(a.Metadata)
-			for _, sd := range shards {
-				fileName := fmt.Sprintf("%04d.%s.def", sd.Seq, compressExt)
-				if err := writeDefFile(targetRoot, fileName, a.ID, sd.DatasetID, sd.Segments); err != nil {
-					return errors.WrapE(err, "write def file")
+			if script != "" {
+				// 脚本模式
+				cmdStr := fmt.Sprintf("%s --id %d --target-root %s", script, id, targetRoot)
+				stdout, stderr, err := exec.RunReturnAll(cmdStr, 0)
+				if stderr != "" {
+					fmt.Print(stderr)
 				}
+				if err != nil {
+					return errors.WrapE(err, "run gen script")
+				}
+
+				n, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
+				if err != nil {
+					return errors.WrapE(err, "parse shard count from script output", "output", stdout)
+				}
+				shardCount = n
+			} else {
+				// 内置模式
+				shards, err := arcset.GenerateShardDefs(context.Background(), store, a.ID)
+				if err != nil {
+					return errors.WrapE(err, "generate shard defs")
+				}
+
+				compressExt := compressExt(a.Metadata)
+				for _, sd := range shards {
+					fileName := fmt.Sprintf("%04d.%s.def", sd.Seq, compressExt)
+					if err := writeDefFile(targetRoot, fileName, a.ID, sd.DatasetID, sd.Segments); err != nil {
+						return errors.WrapE(err, "write def file")
+					}
+				}
+				shardCount = int64(len(shards))
 			}
 
-			// 记录预期的 shard 数量
+			// 回写 shard_count
 			if a.Metadata == nil {
 				a.Metadata = make(map[string]any)
 			}
-			a.Metadata["shard_count"] = int64(len(shards))
+			a.Metadata["shard_count"] = shardCount
 			if err := store.Update(context.Background(), a.Name,
 				arcset.Update{Metadata: a.Metadata}); err != nil {
 				return errors.WrapE(err, "update shard_count")
 			}
 
-			fmt.Printf("generated %d shard-def file(s) for arcset %s in %s\n", len(shards), a.Name, targetRoot)
+			fmt.Printf("generated %d shard-def file(s) for arcset %s in %s\n", shardCount, a.Name, targetRoot)
 			return nil
 		},
 	}
 	cmd.Flags().Int("id", 0, "arcset ID")
 	cmd.Flags().String("target-root", "", "target root directory for shard-def files")
+	cmd.Flags().String("script", "", "external script for custom grouping")
 	return cmd
 }
 
@@ -84,7 +111,12 @@ func writeDefFile(dir, fileName string, arcsetID, datasetID int, descs []arcset.
 	fmt.Fprintf(f, "# arcset_id: %d\n", arcsetID)
 	fmt.Fprintf(f, "# dataset_id: %d\n", datasetID)
 	for _, d := range descs {
-		fmt.Fprintln(f, d.FilePath)
+		if d.FileOffset == 0 && d.SegmentSize == d.FileSize {
+			fmt.Fprintln(f, d.FilePath)
+		} else {
+			fmt.Fprintf(f, `{"path":"%s","offset":%d,"size":%d}`+"\n",
+				d.FilePath, d.FileOffset, d.SegmentSize)
+		}
 	}
 	return nil
 }
