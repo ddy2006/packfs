@@ -12,4 +12,4 @@ shard:
   format:     tar
 
 simulation:
-  file_bytes: 1024
+  file_bytes: 10240

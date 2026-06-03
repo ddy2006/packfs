@@ -30,6 +30,7 @@ internal/<package>/
 - Store 接口定义持久化操作，SQLiteStore 用 `*sql.DB` 注入（`sql.Open("sqlite3", ":memory:")` 做测试）。
 - Create 方法通过 `result.LastInsertId()` 回写对象 ID。
 - nullable 字段 scan 时用 `sql.NullString` / `sql.NullTime` / `sql.NullInt64`。
+- 批量写入用 `BatchAddFileRecords`（多值 INSERT，缺省 199 行/批），比逐条 INSERT 快 10x 以上。环境变量 `PACKFS_BATCH_INSERT` 可调整批大小。
 
 ## 技术栈
 

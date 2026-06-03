@@ -1,14 +1,15 @@
 #!/bin/bash
 # 根据 dataset.def 生成仿真数据文件
-# Usage: bash simulate.sh <def-file> <data-root>
+# Usage: DATA_ROOT=./data bash simulate.sh [def-file]
 
 set -e
 
 DEF="${1:-dataset.def}"
-DATA_ROOT="${2:-./shard-data}"
+DAT_ROOT="${DATA_ROOT:-./data}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-python3 - "$DEF" "$DATA_ROOT" << 'PYEOF'
+START=$SECONDS
+python3 - "$DEF" "$DAT_ROOT/dat" << 'PYEOF'
 import sys, os
 
 def_file, data_root = sys.argv[1], sys.argv[2]
@@ -56,3 +57,4 @@ for ch in range(ch_start, ch_end + 1):
 
 print(f"Total: {total} files in {base}")
 PYEOF
+echo "time=${SECONDS}s"

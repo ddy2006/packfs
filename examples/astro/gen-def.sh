@@ -84,5 +84,6 @@ for ch in range(ch_start, ch_end + 1):
 
     sys.stderr.write(f"  ch{ch}: {count} shards\n")
 
+print(count)
 
 PYEOF

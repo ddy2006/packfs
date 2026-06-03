@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
+	"strconv"
 
 	"github.com/kaichao/gopkg/errors"
 	"github.com/sirupsen/logrus"
@@ -167,4 +169,45 @@ func (s *SQLiteStore) UpdateStatus(ctx context.Context, id int, status string) e
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE t_dataset SET status = ? WHERE id = ?`, status, id)
 	return errors.WrapE(err, "update dataset status", "id", id, "status", status)
+}
+
+func (s *SQLiteStore) BatchAddFileRecords(ctx context.Context, files []*File) error {
+	if len(files) == 0 {
+		return nil
+	}
+	// SQLite 缺省变量上限 999，每行 5 列 → 199 行安全，可通过环境变量覆盖
+	batch := batchSizeFromEnv("PACKFS_BATCH_INSERT", 199)
+	for i := 0; i < len(files); i += batch {
+		end := i + batch
+		if end > len(files) {
+			end = len(files)
+		}
+		chunk := files[i:end]
+		query := "INSERT INTO t_file (file_path, file_size, metadata, sha256, dataset) VALUES "
+		var args []any
+		for j, f := range chunk {
+			if j > 0 {
+				query += ", "
+			}
+			query += "(?, ?, ?, ?, ?)"
+			metadataJSON, _ := json.Marshal(f.Metadata)
+			args = append(args, f.FilePath, f.FileSize, string(metadataJSON), f.Checksum, f.Dataset)
+		}
+		if _, err := s.DB.ExecContext(ctx, query, args...); err != nil {
+			return errors.WrapE(err, "batch add file records", "start", i, "count", len(chunk))
+		}
+	}
+	return nil
+}
+
+func batchSizeFromEnv(key string, def int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
 }

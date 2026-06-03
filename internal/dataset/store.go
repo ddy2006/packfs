@@ -13,5 +13,6 @@ type Store interface {
 
 	// File records
 	AddFileRecord(ctx context.Context, f *File) error
+	BatchAddFileRecords(ctx context.Context, files []*File) error
 	ListFiles(ctx context.Context, datasetID int) ([]*File, error)
 }

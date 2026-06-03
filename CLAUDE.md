@@ -40,6 +40,8 @@ SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs
 
 大部分业务字段（create_time, format, shard_max_bytes 等）存在 JSON `metadata` 列中，表结构仅保留 id、name、关联 FK 等核心列。
 
+`dataset create` 用 `BatchAddFileRecords`（多值 INSERT，199 行/批），10 万文件 ~11s。`PACKFS_BATCH_INSERT` 可调批大小。
+
 ## 状态机
 
 ```

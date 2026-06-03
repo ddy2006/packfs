@@ -31,6 +31,7 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*D
 
 	var fileCount int
 	var totalBytes int64
+	var files []*File
 	err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			logrus.Warnf("skip %s: %v", path, err)
@@ -58,7 +59,7 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*D
 			return nil
 		}
 
-		f := &File{
+		files = append(files, &File{
 			FilePath: relPath,
 			FileSize: info.Size(),
 			Metadata: map[string]any{
@@ -67,15 +68,17 @@ func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*D
 			},
 			Checksum: checksum,
 			Dataset:  ds.ID,
-		}
-		if err := store.AddFileRecord(ctx, f); err != nil {
-			return errors.WrapE(err, "add file record", "file", relPath)
-		}
+		})
 		fileCount++
 		totalBytes += info.Size()
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	// 批量写入（比逐条 INSERT 快 10x+）
+	if err := store.BatchAddFileRecords(ctx, files); err != nil {
 		return nil, err
 	}
 

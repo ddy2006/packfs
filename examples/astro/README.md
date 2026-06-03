@@ -7,45 +7,52 @@
 - channel: 133 ~ 156（24 个）
 - 时间跨度: 1177940019 ~ 1177944816（4798 秒）
 - 文件总数: 115152 个
-- 总容量: ~36 TB
+- 单文件大小: 10 KB（模拟）
+- 总容量: ~1.15 GB（模拟）
 
-## 打包策略
-
-- 按 channel 分组
-- 同 channel 内按时序排序
-- 每 40 个文件一个 shard
-- 文件名: `1177938016/<min_ts>_<max_ts>_ch<channel>.tar.zst`
-
-## 快速开始
+## 运行
 
 ```sh
-# 1) 模拟数据目录（生成空文件，仅创建目录结构和文件名）
-bash simulate.sh /data/ska
+# 1) 模拟数据
+bash simulate.sh
 
-# 2) 创建 dataset
-packfs dataset create --root-dir=/data/ska --name=ska-dataset
-
-# 3) 创建 arcset
-packfs arcset create --name=ska-arcset --target-root=/data/ska-output \
-  --dataset-ids=1 --format=tar --compress=zstd
-
-# 4) 生成 shard 定义
-packfs arcset gen-def --id=1 --target-root=/data/ska-output \
-  --script=./gen-def.sh
-
-# 5a) 串行打包
-bash pack-serial.sh /data/ska-output
-
-# 5b) 分布式打包（scalebox）
-bash pack-scalebox.sh /data/ska-output
+# 2) 全流程打包（dataset create → arcset create → gen-def → shard make → validate → finalize → unpack）
+bash pack-serial.sh
 ```
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `DATA_ROOT` | `./data` | 数据根目录 |
+| `PACKFS_BIN` | `packfs` | packfs 二进制路径 |
+| `SQLITE_DB` | `./packfs.db` | 数据库路径 |
+
+## 测试结果（MacBook Pro M1，1.15 GB × 115152 文件）
+
+| 步骤 | 耗时 | 说明 |
+|------|------|------|
+| dataset create | **11s** | 批量 INSERT（`PACKFS_BATCH_INSERT=199`），优化前 108s |
+| arcset create | 0s | 单条 INSERT |
+| gen-def | 0s | Python 脚本，直接生成 2880 个 .def |
+| shard make | 1322s | 2880 个 shard 串行打包（瓶颈） |
+| validate | 0s | SHA-256 校验 |
+| finalize | 0s | 复制 DB + 归一 arcset_id |
+| unpack | 109s | 解包验证 |
+| **总计** | **1540s** | 115152 个文件全部校验通过 |
+
+## 后续优化
+
+- `shard make`（1322s，占 86%）— scalebox 分布式并行打包
+- `unpack`（109s，7%）— 并行解包
 
 ## 文件说明
 
 | 文件 | 用途 |
 |------|------|
-| `simulate.sh` | 模拟生成文件目录结构 |
-| `gen-def.sh` | gen-def 脚本：按 channel + 时序分组 |
-| `pack-serial.sh` | 串行打包 |
-| `pack-scalebox.sh` | 分布式打包（scalebox） |
-| `unpack.sh` | 解包示例 |
+| `dataset.def` | 数据集配置（时间、channel、分组参数） |
+| `simulate.sh` | 生成固定大小随机数据文件 |
+| `gen-def.sh` | gen-def 脚本：按 channel 分组，40 文件/shard |
+| `pack-serial.sh` | 完整串行流程 + 耗时统计 |
+| `pack-scalebox.sh` | 分布式打包（TBD） |
+| `unpack.sh` | 解包辅助 |
