@@ -128,7 +128,14 @@ rm -rf "$UNPACK_DIR"
 mkdir -p "$UNPACK_DIR"
 
 shopt -s nullglob
-shards=( "$SHARD_DIR"/*.tar.zst "$SHARD_DIR"/*.bin )
+case "$COMPRESS" in
+  zstd|xz)
+    SHARD_SUFFIX="$FORMAT.$(echo "$COMPRESS" | sed 's/zstd/zst/')" ;;
+  segment:zstd|segment:xz)
+    SHARD_SUFFIX="$(echo "$COMPRESS" | sed 's/segment://; s/zstd/zst/').$FORMAT" ;;
+  *) SHARD_SUFFIX="$FORMAT" ;;
+esac
+shards=( "$SHARD_DIR"/*."$SHARD_SUFFIX" )
 shopt -u nullglob
 
 for shard in "${shards[@]}"; do

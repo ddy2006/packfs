@@ -26,15 +26,32 @@ DEF="$SCRIPT_DIR/dataset.def"
 [ ! -f "$DEF" ] && { echo "dataset.def not found" >&2; exit 1; }
 
 DS_NAME=$(awk '/^  name:/{print $2}' "$DEF")
+FORMAT=$(awk '/^  format:/{print $2}' "$DEF")
+COMPRESS=$(awk '/^  compress:/{print $2}' "$DEF")
+[ -z "$FORMAT" ] && FORMAT=bin
+[ -z "$COMPRESS" ] && COMPRESS=""
 [ -z "$TARGET_ROOT" ] && TARGET_ROOT="./shard-def/$DS_NAME"
 [ -z "$TARGET_SET" ] && echo "WARN: --target-root not set, using default $TARGET_ROOT" >&2
 
 # 用 Python 生成 .def 文件
-python3 - "$DEF" "$TARGET_ROOT" "$ARCSET_ID" "$DATASET_ID" << 'PYEOF'
+python3 - "$DEF" "$TARGET_ROOT" "$ARCSET_ID" "$DATASET_ID" "$FORMAT" "$COMPRESS" << 'PYEOF'
 import sys, os, re
 
 def_file, target_root, arcset_id, dataset_id = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+fmt = sys.argv[5] if len(sys.argv) > 5 else 'bin'
+compress = sys.argv[6] if len(sys.argv) > 6 else ''
 
+# 计算 .def 和 shard 文件扩展名，与 Go 端 compressExt/algoExt 保持一致
+algo = ''
+if compress in ('zstd', 'xz', 'zstd_seekable', 'segment:zstd', 'segment:xz'):
+    algo = 'zst' if 'zstd' in compress else 'xz'
+
+if compress in ('zstd', 'xz', 'zstd_seekable'):
+    ext = f'{fmt}.{algo}'           # shard 级压缩: iso.zst
+elif compress in ('segment:zstd', 'segment:xz'):
+    ext = f'{algo}.{fmt}'           # segment 级压缩: zst.iso
+else:
+    ext = fmt                        # 无压缩: iso
 
 config = {}
 with open(def_file) as f:
@@ -75,7 +92,7 @@ for ch in range(ch_start, ch_end + 1):
 
         if batch:
             count += 1
-            fname = f"{target_root}/{batch_start}_{batch_end}_ch{ch}.tar.zst.def"
+            fname = f"{target_root}/{batch_start}_{batch_end}_ch{ch}.{ext}.def"
             with open(fname, 'w') as out:
                 out.write(f"# arcset_id: {arcset_id}\n")
                 out.write(f"# dataset_id: {dataset_id}\n")

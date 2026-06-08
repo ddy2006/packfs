@@ -14,6 +14,7 @@ import (
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
+	"github.com/kdomanski/iso9660"
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/cobra"
 	"github.com/ulikunitz/xz"
@@ -33,8 +34,8 @@ func unpackCmd() *cobra.Command {
 
 			if arcsetID <= 0 {
 				format := inferFormat(shardFile)
-				if format != "tar" {
-					return errors.NewUsage("--arcset-id is required for non-tar shard files")
+				if format != "tar" && format != "iso" {
+					return errors.NewUsage("--arcset-id is required for non-tar/iso shard files")
 				}
 				compress := inferCompress(shardFile)
 				count, err := unpackTarShard(shardFile, targetRoot, compress)
@@ -144,6 +145,79 @@ func unpackTarShard(shardAbsPath, targetRoot, compress string) (int, error) {
 	return count, nil
 }
 
+func unpackIsoShard(shardAbsPath, targetRoot, compress string) (int, error) {
+	src, err := os.ReadFile(shardAbsPath)
+	if err != nil {
+		return 0, errors.WrapE(err, "open shard file", "path", shardAbsPath)
+	}
+
+	isShardCompress := compress == "zstd" || compress == "xz"
+	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
+	isXZ := compress == "xz" || compress == "segment:xz"
+
+	var data []byte = src
+	if isShardCompress {
+		data, err = decompressAll(src, isXZ)
+		if err != nil {
+			return 0, errors.WrapE(err, "decompress shard")
+		}
+	}
+
+	img, err := iso9660.OpenImage(bytes.NewReader(data))
+	if err != nil {
+		return 0, errors.WrapE(err, "open iso image")
+	}
+
+	root, err := img.RootDir()
+	if err != nil {
+		return 0, errors.WrapE(err, "read iso root dir")
+	}
+
+	return extractISO(root, targetRoot, "", isSegmentCompress, isXZ)
+}
+
+func extractISO(dir *iso9660.File, targetRoot, prefix string, isSegmentCompress, isXZ bool) (int, error) {
+	count := 0
+	children, err := dir.GetChildren()
+	if err != nil {
+		return 0, errors.WrapE(err, "read iso dir", "name", dir.Name())
+	}
+	for _, child := range children {
+		childRel := filepath.Join(prefix, child.Name())
+		if child.IsDir() {
+			subCount, err := extractISO(child, targetRoot, childRel, isSegmentCompress, isXZ)
+			if err != nil {
+				return count, err
+			}
+			count += subCount
+			continue
+		}
+
+		outPath := filepath.Join(targetRoot, childRel)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return count, err
+		}
+
+		content, err := io.ReadAll(child.Reader())
+		if err != nil {
+			return count, errors.WrapE(err, "read iso file", "name", childRel)
+		}
+
+		if isSegmentCompress {
+			content, err = decompressAll(content, isXZ)
+			if err != nil {
+				return count, errors.WrapE(err, "decompress segment", "file", childRel)
+			}
+		}
+
+		if err := os.WriteFile(outPath, content, 0644); err != nil {
+			return count, errors.WrapE(err, "create output file", "path", outPath)
+		}
+		count++
+	}
+	return count, nil
+}
+
 func unpackShardFile(store *shard.SQLiteStore, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
 	infos, err := store.ListUnpackInfo(context.Background(), shardID)
 	if err != nil {
@@ -207,6 +281,28 @@ func unpackShardFile(store *shard.SQLiteStore, shardID int, shardAbsPath, target
 		return count, nil
 	}
 
+	if format == "iso" {
+		var data []byte = src
+		if isShardCompress {
+			data, err = decompressAll(src, isXZ)
+			if err != nil {
+				return 0, errors.WrapE(err, "decompress shard")
+			}
+		}
+
+		img, err := iso9660.OpenImage(bytes.NewReader(data))
+		if err != nil {
+			return 0, errors.WrapE(err, "open iso image")
+		}
+
+		root, err := img.RootDir()
+		if err != nil {
+			return 0, errors.WrapE(err, "read iso root dir")
+		}
+
+		return extractISO(root, targetRoot, "", isSegmentCompress, isXZ)
+	}
+
 	var decompressed []byte
 	if isShardCompress {
 		decompressed, err = decompressAll(src, isXZ)
@@ -259,6 +355,9 @@ func decompressAll(data []byte, isXZ bool) ([]byte, error) {
 // inferFormat detects the pack format from the shard filename extension.
 func inferFormat(filename string) string {
 	base := filepath.Base(filename)
+	if strings.Contains(base, ".iso") {
+		return "iso"
+	}
 	if strings.Contains(base, ".tar") {
 		return "tar"
 	}
@@ -269,17 +368,17 @@ func inferFormat(filename string) string {
 func inferCompress(filename string) string {
 	base := filepath.Base(filename)
 	// segment-level: .zst.format or .xz.format
-	if strings.Contains(base, ".zst.tar") || strings.Contains(base, ".zst.bin") {
+	if strings.Contains(base, ".zst.tar") || strings.Contains(base, ".zst.bin") || strings.Contains(base, ".zst.iso") {
 		return "segment:zstd"
 	}
-	if strings.Contains(base, ".xz.tar") || strings.Contains(base, ".xz.bin") {
+	if strings.Contains(base, ".xz.tar") || strings.Contains(base, ".xz.bin") || strings.Contains(base, ".xz.iso") {
 		return "segment:xz"
 	}
 	// shard-level: format.zst or format.xz
-	if strings.Contains(base, ".tar.zst") || strings.Contains(base, ".bin.zst") {
+	if strings.Contains(base, ".tar.zst") || strings.Contains(base, ".bin.zst") || strings.Contains(base, ".iso.zst") {
 		return "zstd"
 	}
-	if strings.Contains(base, ".tar.xz") || strings.Contains(base, ".bin.xz") {
+	if strings.Contains(base, ".tar.xz") || strings.Contains(base, ".bin.xz") || strings.Contains(base, ".iso.xz") {
 		return "xz"
 	}
 	return ""

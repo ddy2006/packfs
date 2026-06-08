@@ -16,6 +16,8 @@ func TestParseDefName(t *testing.T) {
 		{"0001.bin.def", shard.ShardDefName{ID: "0001", Compress: "", Format: "bin"}, false},
 		{"0002.zst.bin.def", shard.ShardDefName{ID: "0002", Compress: "zst", Format: "bin"}, false},
 		{"0003.tar.def", shard.ShardDefName{ID: "0003", Compress: "", Format: "tar"}, false},
+		{"0004.iso.def", shard.ShardDefName{ID: "0004", Compress: "", Format: "iso"}, false},
+		{"0005.zst.iso.def", shard.ShardDefName{ID: "0005", Compress: "zst", Format: "iso"}, false},
 		{"/abs/path/001.zst.bin.def", shard.ShardDefName{ID: "001", Compress: "zst", Format: "bin"}, false},
 		{"not-a-def.txt", shard.ShardDefName{}, true},
 		{"a.def", shard.ShardDefName{}, true}, // only one part

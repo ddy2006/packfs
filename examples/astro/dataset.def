@@ -9,7 +9,7 @@ shard:
   group_by:   channel
   group_size: 40
   compress:   zstd
-  format:     tar
+  format:     iso
 
 simulation:
   file_bytes: 10240

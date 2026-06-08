@@ -13,6 +13,7 @@ import (
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
+	"github.com/kdomanski/iso9660"
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/cobra"
 	"github.com/ulikunitz/xz"
@@ -144,6 +145,28 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 		return count, nil
 	}
 
+	if format == "iso" {
+		var data []byte = src
+		if isShardCompress {
+			data, err = decompressAll(src, isXZ)
+			if err != nil {
+				return 0, errors.WrapE(err, "decompress shard")
+			}
+		}
+
+		img, err := iso9660.OpenImage(bytes.NewReader(data))
+		if err != nil {
+			return 0, errors.WrapE(err, "open iso image")
+		}
+
+		root, err := img.RootDir()
+		if err != nil {
+			return 0, errors.WrapE(err, "read iso root dir")
+		}
+
+		return extractISO(root, targetRoot, "", isSegmentCompress, isXZ)
+	}
+
 	var decompressed []byte
 	if isShardCompress {
 		decompressed, err = decompressAll(src, isXZ)
@@ -191,4 +214,46 @@ func decompressAll(data []byte, isXZ bool) ([]byte, error) {
 	}
 	defer r.Close()
 	return io.ReadAll(r)
+}
+
+func extractISO(dir *iso9660.File, targetRoot, prefix string, isSegmentCompress, isXZ bool) (int, error) {
+	count := 0
+	children, err := dir.GetChildren()
+	if err != nil {
+		return 0, errors.WrapE(err, "read iso dir", "name", dir.Name())
+	}
+	for _, child := range children {
+		childRel := filepath.Join(prefix, child.Name())
+		if child.IsDir() {
+			subCount, err := extractISO(child, targetRoot, childRel, isSegmentCompress, isXZ)
+			if err != nil {
+				return count, err
+			}
+			count += subCount
+			continue
+		}
+
+		outPath := filepath.Join(targetRoot, childRel)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return count, err
+		}
+
+		content, err := io.ReadAll(child.Reader())
+		if err != nil {
+			return count, errors.WrapE(err, "read iso file", "name", childRel)
+		}
+
+		if isSegmentCompress {
+			content, err = decompressAll(content, isXZ)
+			if err != nil {
+				return count, errors.WrapE(err, "decompress segment", "file", childRel)
+			}
+		}
+
+		if err := os.WriteFile(outPath, content, 0644); err != nil {
+			return count, errors.WrapE(err, "create output file", "path", outPath)
+		}
+		count++
+	}
+	return count, nil
 }

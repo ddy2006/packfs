@@ -19,6 +19,7 @@ import (
 //	0001.bin.def           → ID="0001", Compress="", Format="bin"
 //	0002.zst.bin.def       → ID="0002", Compress="zst", Format="bin"
 //	0003.tar.def           → ID="0003", Compress="", Format="tar"
+//	0004.iso.def           → ID="0004", Compress="", Format="iso"
 type ShardDefName struct {
 	ID       string
 	Compress string
