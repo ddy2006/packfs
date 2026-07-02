@@ -1,0 +1,26 @@
+name: packfs-mwa
+cluster: ${CLUSTER}
+parameters:
+  main_router: router
+
+modules:
+  pull-untar:
+    arguments:
+      code_path: ${PWD}/pull-untar
+    slots:
+      - h0
+
+  shard-make:
+    arguments:
+      code_path: ${PWD}/shard-make
+    slots:
+      - h0
+
+  router:
+    base_image: packfs/router-packfs:latest
+    arguments:
+      slot_options: slot_on_head
+    environments:
+      - ACTION_RUN=/app/bin/router
+      - ORIGIN_PACKED=yes
+      - ZSTD_COMPRESSED=yes
