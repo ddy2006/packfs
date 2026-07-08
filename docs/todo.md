@@ -20,6 +20,7 @@
 - 按文件数量分组
 - 定制的排序方式
 - shard文件名的定制模板
+- 纠删码的实现
 
 示例：
 
@@ -101,6 +102,10 @@ shard分组方法
 ## zstd seekable
 
 ## iso打包格式
+
+- iso9660 库（`github.com/kdomanski/iso9660`）`WriteTo()` 内部硬编码 `time.Now()`，写入 PVD 的 `VolumeCreationDateAndTime` / `VolumeModificationDateAndTime` / `VolumeEffectiveDateAndTime` 字段，导致每次生成的 ISO 镜像字节不同，SHA-256 checksum 不匹配。
+  - 已 fork 到 `internal/iso9660/`，`ImageWriter` 增加 `Timestamp` 字段，`doMakeIsoShard` 传入 `time.Unix(0, 0)` 固定时间戳。
+  - tar 无此问题，因 `archive/tar` 输出确定性。
 
 
 ## postgresql支持

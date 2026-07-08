@@ -1,0 +1,10 @@
+# EC 纠删码参数配置
+# ec: k+m 格式，改下面的值即可
+
+ec: "4+2"
+
+# shard 文件目录（相对于 ec_app 目录）
+shard-dir: "../data/shard"
+
+# 是否执行恢复测试
+recover: true
