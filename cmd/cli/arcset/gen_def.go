@@ -10,6 +10,7 @@ import (
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/db"
+	"github.com/ddy2006/packfs/internal/ec"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/kaichao/gopkg/exec"
 	"github.com/spf13/cobra"
@@ -77,6 +78,9 @@ func genDefCmd() *cobra.Command {
 				shardCount = int64(len(shards))
 			}
 
+			// EC 补齐：data shard 数必须能被 k 整除。
+			shardCount = padForEC(a, store, targetRoot, shardCount)
+
 			// 回写 shard_count
 			if a.Metadata == nil {
 				a.Metadata = make(map[string]any)
@@ -95,6 +99,42 @@ func genDefCmd() *cobra.Command {
 	cmd.Flags().String("target-root", "", "target root directory for shard-def files")
 	cmd.Flags().String("script", "", "external script for custom grouping")
 	return cmd
+}
+
+// padForEC adds empty .def files so the total data shard count is a multiple of k.
+// Returns the updated shard count.
+func padForEC(a *arcset.Arcset, store arcset.Store, targetRoot string, shardCount int64) int64 {
+	ecStr, ok := a.Metadata["ec"].(string)
+	if !ok || ecStr == "" {
+		return shardCount
+	}
+	ecCfg, err := ec.ParseConfig(ecStr)
+	if err != nil {
+		return shardCount
+	}
+
+	pad := int64(ecCfg.K) - (shardCount % int64(ecCfg.K))
+	if pad <= 0 || pad >= int64(ecCfg.K) {
+		return shardCount
+	}
+
+	dsID := firstDatasetID(store, a.ID)
+	ext := compressExt(a.Metadata)
+	for i := int64(0); i < pad; i++ {
+		name := fmt.Sprintf("PAD_%04d.%s.def", i, ext)
+		writeDefFile(targetRoot, name, a.ID, dsID, nil)
+	}
+	fmt.Printf("padded %d empty shard-def(s) for EC alignment (k=%d)\n", pad, ecCfg.K)
+	return shardCount + pad
+}
+
+// firstDatasetID returns the ID of the first dataset linked to the arcset.
+func firstDatasetID(store arcset.Store, arcsetID int) int {
+	refs, err := store.ListDatasetRefs(context.Background(), arcsetID)
+	if err != nil || len(refs) == 0 {
+		return 0
+	}
+	return refs[0].ID
 }
 
 func writeDefFile(dir, fileName string, arcsetID, datasetID int, descs []arcset.SegmentDesc) error {

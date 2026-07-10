@@ -9,6 +9,7 @@ import (
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/db"
+	"github.com/ddy2006/packfs/internal/ec"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -45,6 +46,7 @@ func createCmd() *cobra.Command {
 			}
 			shardMaxBytes, _ := cmd.Flags().GetInt64("shard-max-bytes")
 			compress, _ := cmd.Flags().GetString("compress")
+			ecStr, _ := cmd.Flags().GetString("ec")
 
 			metadata := map[string]any{
 				"format": format,
@@ -54,6 +56,16 @@ func createCmd() *cobra.Command {
 			}
 			if compress != "" {
 				metadata["compress"] = compress
+			}
+			if ecStr != "" {
+				ecCfg, err := ec.ParseConfig(ecStr)
+				if err != nil {
+					return errors.NewUsage(fmt.Sprintf("invalid --ec: %v", err))
+				}
+				if err := ecCfg.Validate(); err != nil {
+					return errors.NewUsage(fmt.Sprintf("invalid --ec: %v", err))
+				}
+				metadata["ec"] = ecStr
 			}
 
 			sqlDB, err := db.OpenSQLite()
@@ -82,6 +94,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().String("format", "bin", "pack format: bin/iso/tar")
 	cmd.Flags().Int64("shard-max-bytes", 0, "max shard size in bytes")
 	cmd.Flags().String("compress", "", "compression: zstd, segment:zstd, segment:xz, zstd_seekable, xz")
+	cmd.Flags().String("ec", "", "erasure code config (k+m, e.g. 8+4)")
 	return cmd
 }
 

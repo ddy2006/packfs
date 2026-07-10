@@ -77,6 +77,15 @@ Stripe 4: f10, f11, f12       → 4D1_f10, 4D2_f11, 4D3_f12 + 4E4, 4E5
 
 如果 data 文件数不能被 k 整除，需要补空 shard（内容为空的 data 文件）补齐。
 
+**补齐分层**：
+
+| 层级 | 负责模块 | 机制 | 产物 |
+|------|---------|------|------|
+| CLI 层（主） | `arcset gen-def` | 生成 `PAD_0000.{ext}.def`，由 `shard make` 创建空 shard 文件，写入 `t_shard` | 空 .def → 空 shard（DB 有记录） |
+| EC 层（兜底） | `PlanStripes` | 文件数 % k ≠ 0 时自动补 padding 位（`OrigPath=""`），`EncodeStripe` 写空文件到 `NewPath` | 空 `_pad.{ext}` 文件（DB 不知情） |
+
+CLI 链路（`arcset create --ec → gen-def → shard make → make-ec`）由 gen-def 保证整除，EC 层 padding 不触发。EC 包独立使用时（如 `ec_app`），PlanStripes 兜底。
+
 ## 磁带分配方案（TapeLayout）
 
 同一 stripe 的 k+m 个 shard 必须分散到不同磁带上。EC 包提供两种分配方案，通过参数选择，缺省为方案 A。
