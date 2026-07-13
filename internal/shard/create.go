@@ -3,13 +3,14 @@ package shard
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/ddy2006/packfs/internal/arcset"
+	"github.com/ddy2006/packfs/internal/dataset"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -18,7 +19,7 @@ import (
 func CreateShard(
 	ctx context.Context,
 	store Store,
-	descs []arcset.SegmentDesc,
+	descs []dataset.SegmentDesc,
 	arcsetID, datasetID int,
 	seq int,
 	outputDir string,
@@ -39,7 +40,7 @@ func CreateShard(
 
 	type pendingSeg struct {
 		seg  *Segment
-		desc arcset.SegmentDesc
+		desc dataset.SegmentDesc
 	}
 	var pendings []pendingSeg
 	var shardSize int64
@@ -73,8 +74,8 @@ func CreateShard(
 		Type:      shardType,
 		Checksum:  shardChecksum,
 		LastCheck: time.Now(),
-		Arcset:    arcsetID,
-		Dataset:   datasetID,
+		Arcset:    sql.NullInt64{Int64: int64(arcsetID), Valid: arcsetID > 0},
+		Dataset:   sql.NullInt64{Int64: int64(datasetID), Valid: datasetID > 0},
 	}
 	if err := store.CreateShard(ctx, sh); err != nil {
 		return err
@@ -92,7 +93,7 @@ func CreateShard(
 	return nil
 }
 
-func copySegmentTo(w, shardHash io.Writer, desc arcset.SegmentDesc) (checksum string, written int64, err error) {
+func copySegmentTo(w, shardHash io.Writer, desc dataset.SegmentDesc) (checksum string, written int64, err error) {
 	f, err := os.Open(desc.FilePath)
 	if err != nil {
 		return "", 0, err

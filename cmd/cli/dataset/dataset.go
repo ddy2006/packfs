@@ -14,5 +14,8 @@ func Command() *cobra.Command {
 
 	cmd.AddCommand(createCmd())
 	cmd.AddCommand(listCmd())
+	cmd.AddCommand(unpackCmd())
+	cmd.AddCommand(validateCmd())
+	cmd.AddCommand(finalizeCmd())
 	return cmd
 }

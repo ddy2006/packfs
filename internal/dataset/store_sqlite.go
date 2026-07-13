@@ -49,6 +49,11 @@ func (s *SQLiteStore) UpdateMetadata(ctx context.Context, id int, metadata map[s
 	return errors.WrapE(err, "update dataset metadata", "id", id)
 }
 
+func (s *SQLiteStore) FindByID(ctx context.Context, id int) (*Dataset, error) {
+	query := `SELECT id, name, label, status, metadata, current_path, comment FROM t_dataset WHERE id = ?`
+	return s.scanOne(s.DB.QueryRowContext(ctx, query, id))
+}
+
 func (s *SQLiteStore) FindByName(ctx context.Context, name string) (*Dataset, error) {
 	query := `SELECT id, name, label, status, metadata, current_path, comment FROM t_dataset WHERE name = ?`
 	return s.scanOne(s.DB.QueryRowContext(ctx, query, name))
@@ -101,7 +106,7 @@ func (s *SQLiteStore) AddFileRecord(ctx context.Context, f *File) error {
 
 func (s *SQLiteStore) ListFiles(ctx context.Context, datasetID int) ([]*File, error) {
 	query := `SELECT file_path, file_size, metadata, sha256, dataset
-	           FROM t_file WHERE dataset = ? AND file_path NOT LIKE '%/%' ORDER BY file_path`
+	           FROM t_file WHERE dataset = ? ORDER BY file_path`
 
 	rows, err := s.DB.QueryContext(ctx, query, datasetID)
 	if err != nil {

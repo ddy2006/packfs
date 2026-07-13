@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ddy2006/packfs/internal/arcset"
+	"github.com/ddy2006/packfs/internal/dataset"
 	"github.com/ddy2006/packfs/internal/shard"
 )
 
@@ -32,11 +32,14 @@ func setupDB(t *testing.T) *sql.DB {
 		sha256 VARCHAR,
 		metadata JSON,
 		last_check DATETIME,
-		arcset INTEGER NOT NULL,
-		dataset INTEGER NOT NULL
+		arcset INTEGER,
+		dataset INTEGER,
+		CHECK (dataset IS NOT NULL OR arcset IS NOT NULL)
 	);
-	CREATE UNIQUE INDEX idx_t_shard__arcset_dataset_file_path
-		ON t_shard (arcset, dataset, file_path);
+	CREATE UNIQUE INDEX idx_t_shard__dataset_file_path
+		ON t_shard (dataset, file_path) WHERE dataset IS NOT NULL;
+	CREATE UNIQUE INDEX idx_t_shard__arcset_file_path
+		ON t_shard (arcset, file_path) WHERE arcset IS NOT NULL;
 	CREATE TABLE t_segment (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		offset BIGINT,
@@ -66,7 +69,7 @@ func TestCreateShard(t *testing.T) {
 		t.Fatalf("write source file: %v", err)
 	}
 
-	descs := []arcset.SegmentDesc{
+	descs := []dataset.SegmentDesc{
 		{FilePath: srcFile, FileSize: int64(len(data)), FileOffset: 0, SegmentSize: int64(len(data)), FileID: 1},
 	}
 
@@ -95,8 +98,8 @@ func TestCreateShard(t *testing.T) {
 	if shards[0].FileSize != int64(len(data)) {
 		t.Errorf("FileSize: got %d, want %d", shards[0].FileSize, len(data))
 	}
-	if shards[0].Dataset != 1 {
-		t.Errorf("Dataset: got %d, want 1", shards[0].Dataset)
+	if shards[0].Dataset.Int64 != 1 {
+		t.Errorf("Dataset: got %d, want 1", shards[0].Dataset.Int64)
 	}
 	if shards[0].Checksum == "" {
 		t.Error("expected non-empty shard checksum")
@@ -116,7 +119,7 @@ func TestCreateShardMultipleSegments(t *testing.T) {
 	os.WriteFile(srcA, dataA, 0644)
 	os.WriteFile(srcB, dataB, 0644)
 
-	descs := []arcset.SegmentDesc{
+	descs := []dataset.SegmentDesc{
 		{FilePath: srcA, FileSize: int64(len(dataA)), FileOffset: 0, SegmentSize: int64(len(dataA)), FileID: 1},
 		{FilePath: srcB, FileSize: int64(len(dataB)), FileOffset: 0, SegmentSize: int64(len(dataB)), FileID: 2},
 	}
@@ -176,8 +179,8 @@ func TestTarShardRoundtrip(t *testing.T) {
 		FileSize: int64(len(tarBuf.Bytes())),
 		Type:     "DATA",
 		Checksum: "dummy",
-		Arcset:   1,
-		Dataset:  1,
+		Arcset:   sql.NullInt64{Int64: 1, Valid: true},
+		Dataset:  sql.NullInt64{Int64: 1, Valid: true},
 	}
 	if err := store.CreateShard(ctx, sh); err != nil {
 		t.Fatalf("CreateShard: %v", err)

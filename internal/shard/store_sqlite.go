@@ -19,22 +19,52 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore { return &SQLiteStore{DB: db} }
 
 func (s *SQLiteStore) CreateShard(ctx context.Context, sh *Shard) error {
 	metadataJSON, _ := json.Marshal(sh.Metadata)
-	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO t_shard (seq, file_path, file_size, type, sha256, metadata, last_check, arcset, dataset)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(arcset, dataset, file_path)
-		 DO UPDATE SET seq=excluded.seq, file_size=excluded.file_size, type=excluded.type,
-		               sha256=excluded.sha256, metadata=excluded.metadata,
-		               last_check=excluded.last_check`,
-		sh.Seq, sh.FilePath, sh.FileSize, sh.Type, sh.Checksum,
-		string(metadataJSON), sh.LastCheck, sh.Arcset, sh.Dataset)
+
+	// 根据归属选择冲突检测索引：dataset shard 用 dataset 条件唯一索引，
+	// arcset-only shard（EC/PAD）用 arcset 条件唯一索引。
+	var result sql.Result
+	var err error
+	if sh.Dataset.Valid {
+		result, err = s.DB.ExecContext(ctx,
+			`INSERT INTO t_shard (seq, file_path, file_size, type, sha256, metadata, last_check, arcset, dataset)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(dataset, file_path) WHERE dataset IS NOT NULL
+			 DO UPDATE SET seq=excluded.seq, file_size=excluded.file_size, type=excluded.type,
+			               sha256=excluded.sha256, metadata=excluded.metadata,
+			               last_check=excluded.last_check`,
+			sh.Seq, sh.FilePath, sh.FileSize, sh.Type, sh.Checksum,
+			string(metadataJSON), sh.LastCheck, sh.Arcset, sh.Dataset)
+	} else {
+		result, err = s.DB.ExecContext(ctx,
+			`INSERT INTO t_shard (seq, file_path, file_size, type, sha256, metadata, last_check, arcset, dataset)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(arcset, file_path) WHERE arcset IS NOT NULL
+			 DO UPDATE SET seq=excluded.seq, file_size=excluded.file_size, type=excluded.type,
+			               sha256=excluded.sha256, metadata=excluded.metadata,
+			               last_check=excluded.last_check`,
+			sh.Seq, sh.FilePath, sh.FileSize, sh.Type, sh.Checksum,
+			string(metadataJSON), sh.LastCheck, sh.Arcset, sh.Dataset)
+	}
 	if err != nil {
 		return errors.WrapE(err, "upsert shard", "file_path", sh.FilePath)
 	}
 
-	row := s.DB.QueryRowContext(ctx,
-		`SELECT id FROM t_shard WHERE arcset = ? AND dataset = ? AND file_path = ?`,
-		sh.Arcset, sh.Dataset, sh.FilePath)
+	// INSERT 新行时 LastInsertId 有效；ON CONFLICT UPDATE 时需要回查
+	if id, _ := result.LastInsertId(); id > 0 {
+		sh.ID = int(id)
+		return nil
+	}
+
+	var row *sql.Row
+	if sh.Dataset.Valid {
+		row = s.DB.QueryRowContext(ctx,
+			`SELECT id FROM t_shard WHERE dataset = ? AND file_path = ?`,
+			sh.Dataset, sh.FilePath)
+	} else {
+		row = s.DB.QueryRowContext(ctx,
+			`SELECT id FROM t_shard WHERE arcset = ? AND file_path = ?`,
+			sh.Arcset, sh.FilePath)
+	}
 	if err := row.Scan(&sh.ID); err != nil {
 		return errors.WrapE(err, "query shard id after upsert")
 	}
@@ -73,6 +103,42 @@ func (s *SQLiteStore) FindByArcset(ctx context.Context, arcsetID int) ([]*Shard,
 	rows, err := s.DB.QueryContext(ctx, query, arcsetID)
 	if err != nil {
 		return nil, errors.WrapE(err, "find shards by arcset", "arcset_id", arcsetID)
+	}
+	defer rows.Close()
+
+	var shards []*Shard
+	for rows.Next() {
+		sh := &Shard{}
+		var metadataBytes []byte
+		var lastCheck string
+		if err := rows.Scan(&sh.ID, &sh.Seq, &sh.FilePath, &sh.FileSize, &sh.Type,
+			&sh.Checksum, &metadataBytes, &lastCheck, &sh.Arcset, &sh.Dataset); err != nil {
+			return nil, errors.WrapE(err, "scan shard row")
+		}
+		if lastCheck != "" {
+			if t, err := time.Parse("2006-01-02 15:04:05", lastCheck); err == nil {
+				sh.LastCheck = t
+			}
+		}
+		sh.Metadata = make(map[string]any)
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &sh.Metadata); err != nil {
+				logrus.Errorf("unmarshal shard metadata failed: %v", err)
+			}
+		}
+		shards = append(shards, sh)
+	}
+	return shards, rows.Err()
+}
+
+func (s *SQLiteStore) FindByDataset(ctx context.Context, datasetID int) ([]*Shard, error) {
+	query := `SELECT id, COALESCE(seq,0), file_path, COALESCE(file_size,0), COALESCE(type,''),
+	           COALESCE(sha256,''), COALESCE(metadata,'{}'),
+	           COALESCE(last_check,''), arcset, dataset
+	           FROM t_shard WHERE dataset = ? ORDER BY seq`
+	rows, err := s.DB.QueryContext(ctx, query, datasetID)
+	if err != nil {
+		return nil, errors.WrapE(err, "find shards by dataset", "dataset_id", datasetID)
 	}
 	defer rows.Close()
 

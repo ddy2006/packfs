@@ -2,14 +2,14 @@
 
 ## ✅ 已实现
 
-- dataset create / list
-- arcset create / gen-def / unpack / validate / finalize
+- dataset create / list / unpack / validate / finalize
+- arcset create
 - shard make / unpack / validate（bin 需 --arcset-id）
 - shard 定义文件（.def）：纯路径 + JSON segment
 - 分包：按 dataset 粒度，shard_max_bytes 控制
 - 压缩：zstd / xz / zstd_seekable（shard 级缺省）
 - 状态机：building → complete → ready（arcset）、active → archived（dataset）
-- finalize：校验 → 复制 DB → arcset_id 归一 → 目录自包含
+- finalize：校验 → 复制 DB → dataset_id 归一 → 目录自包含
 - 幂等：shard make ON CONFLICT DO UPDATE
 - 文件大小校验：shard make 对比 DB 与实际大小，不一致 warning
 
@@ -35,7 +35,7 @@ shard分组方法
 - 每组40个，40秒一个shard，末尾可能不完全对齐
 - 分组后shard文件名：1177938016/1177940019_1177940058_ch148.tar.zst
 
-如何设计arcset的元数据定义及arcset gen-def命令参数，使得能支持以上的功能？
+如何设计dataset的元数据定义及dataset gen-def命令参数，使得能支持以上的功能？
 
 
 ### 性能优化

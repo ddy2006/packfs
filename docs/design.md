@@ -155,7 +155,7 @@ ER 图：![ER 图](../packfs-erd.svg)
 **1. 内置模式**（缺省，数据保存场景）：
 
 ```sh
-packfs arcset gen-def --id=1 --target-root=/output
+packfs dataset create --gen-only --target-root=/output --id=1
 ```
 
 1. 按 dataset 分组
@@ -167,7 +167,7 @@ packfs arcset gen-def --id=1 --target-root=/output
 **2. 脚本模式**（自定义分组场景）：
 
 ```sh
-packfs arcset gen-def --id=1 --target-root=/output --script=./my-gen.sh
+packfs dataset create --gen-only --target-root=/output --id=1 --script=./my-gen.sh
 ```
 
 gen-def 执行外部脚本：

@@ -6,6 +6,7 @@ import "context"
 type Store interface {
 	// Dataset CRUD
 	Create(ctx context.Context, ds *Dataset) error
+	FindByID(ctx context.Context, id int) (*Dataset, error)
 	UpdateMetadata(ctx context.Context, id int, metadata map[string]any) error
 	UpdateStatus(ctx context.Context, id int, status string) error
 	FindByName(ctx context.Context, name string) (*Dataset, error)

@@ -16,7 +16,7 @@
 # 1) 模拟数据
 bash simulate.sh
 
-# 2) 全流程打包（dataset create → arcset create → gen-def → shard make → validate → finalize → unpack）
+# 2) 全流程打包（dataset create → gen-def → shard make → dataset validate → dataset finalize → unpack）
 bash pack-serial.sh
 ```
 
@@ -33,11 +33,10 @@ bash pack-serial.sh
 | 步骤 | 耗时 | 说明 |
 |------|------|------|
 | dataset create | **11s** | 批量 INSERT（`PACKFS_BATCH_INSERT=199`），优化前 108s |
-| arcset create | 0s | 单条 INSERT |
 | gen-def | 0s | Python 脚本，直接生成 2880 个 .def |
 | shard make | 1322s | 2880 个 shard 串行打包（瓶颈） |
 | validate | 0s | SHA-256 校验 |
-| finalize | 0s | 复制 DB + 归一 arcset_id |
+| finalize | 0s | 复制 DB + 归一 dataset_id |
 | unpack | 109s | 解包验证 |
 | **总计** | **1540s** | 115152 个文件全部校验通过 |
 

@@ -60,8 +60,9 @@ CREATE TABLE "T_shard" (
   "metadata" JSON,
   "sha256" VARCHAR,
   "last_check" DATETIME,
-  "arcset" INTEGER NOT NULL REFERENCES "T_arcset" ("id") ON DELETE CASCADE,
-  "dataset" INTEGER NOT NULL REFERENCES "T_dataset" ("id") ON DELETE CASCADE
+  "arcset" INTEGER REFERENCES "T_arcset" ("id") ON DELETE CASCADE,
+  "dataset" INTEGER REFERENCES "T_dataset" ("id") ON DELETE CASCADE,
+  CHECK ("dataset" IS NOT NULL OR "arcset" IS NOT NULL)
 );
 
 CREATE INDEX "idx_t_shard__arcset" ON "T_shard" ("arcset");
@@ -103,5 +104,7 @@ CREATE INDEX "idx_r_shard_tape__shard" ON "R_shard_tape" ("shard");
 
 CREATE INDEX "idx_r_shard_tape__tape" ON "R_shard_tape" ("tape");
 
-CREATE UNIQUE INDEX "idx_t_shard__arcset_dataset_file_path"
-  ON "T_shard" ("arcset", "dataset", "file_path");
+CREATE UNIQUE INDEX "idx_t_shard__dataset_file_path"
+  ON "T_shard" ("dataset", "file_path") WHERE "dataset" IS NOT NULL;
+CREATE UNIQUE INDEX "idx_t_shard__arcset_file_path"
+  ON "T_shard" ("arcset", "file_path") WHERE "arcset" IS NOT NULL;

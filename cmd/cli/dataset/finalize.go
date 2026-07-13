@@ -1,4 +1,4 @@
-package arcset
+package dataset
 
 import (
 	"context"
@@ -9,9 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ddy2006/packfs/internal/arcset"
+	"github.com/ddy2006/packfs/internal/dataset"
 	"github.com/ddy2006/packfs/internal/db"
-	datasetpkg "github.com/ddy2006/packfs/internal/dataset"
 	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/spf13/cobra"
@@ -20,7 +19,7 @@ import (
 func finalizeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "finalize",
-		Short: "Finalize arcset: seal DB and mark ready",
+		Short: "Finalize dataset: seal DB and mark archived",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, _ := cmd.Flags().GetInt("id")
 			if id <= 0 {
@@ -33,78 +32,70 @@ func finalizeCmd() *cobra.Command {
 			}
 			defer sqlDB.Close()
 
-			arcStore := arcset.NewSQLiteStore(sqlDB)
-			a, err := arcStore.FindByID(context.Background(), id)
+			dsStore := dataset.NewSQLiteStore(sqlDB)
+			ds, err := dsStore.FindByID(context.Background(), id)
 			if err != nil {
-				return errors.WrapE(err, "find arcset")
+				return errors.WrapE(err, "find dataset")
 			}
 
-			// 校验所有 shard
+			sourceRoot, _ := cmd.Flags().GetString("source-root")
+			if sourceRoot == "" {
+				sourceRoot = ds.CurrentPath
+			}
+
+			// Validate all shards
 			shardStore := shard.NewSQLiteStore(sqlDB)
-			shards, err := shardStore.FindByArcset(context.Background(), a.ID)
+			shards, err := shardStore.FindByDataset(context.Background(), ds.ID)
 			if err != nil {
 				return errors.WrapE(err, "find shards")
 			}
 
 			for _, sh := range shards {
-				if err := validateShardFile(a.CurrentPath, sh.FilePath, sh.Checksum); err != nil {
+				absPath := filepath.Join(sourceRoot, sh.FilePath)
+				if err := validateShardFile(absPath, sh.Checksum); err != nil {
 					return err
 				}
 			}
 			fmt.Printf("all %d shards validated\n", len(shards))
 
-			// 复制 SQLite DB 到 current_path
+			// Copy SQLite DB to current_path
 			dbPath := os.Getenv("SQLITE_DB")
 			if dbPath == "" {
 				home, _ := os.UserHomeDir()
 				dbPath = filepath.Join(home, "data", "packfs.db")
 			}
-			targetDB := filepath.Join(a.CurrentPath, "packfs.db")
+			targetDB := filepath.Join(ds.CurrentPath, "packfs.db")
 			if err := copyFile(dbPath, targetDB); err != nil {
-				return errors.WrapE(err, "copy database to arcset dir")
+				return errors.WrapE(err, "copy database to dataset dir")
 			}
 
-			// 在新 DB 中归一 arcset ID
+			// Normalize dataset ID in new DB
 			newDB, err := sql.Open("sqlite3", targetDB)
 			if err != nil {
 				return errors.WrapE(err, "open target database")
 			}
 			if _, err := newDB.ExecContext(context.Background(),
-				`UPDATE t_arcset SET id = 1, current_path = '.' WHERE id = ?`, a.ID); err != nil {
+				`UPDATE t_dataset SET id = 1, current_path = '.' WHERE id = ?`, ds.ID); err != nil {
 				newDB.Close()
-				return errors.WrapE(err, "normalize arcset id")
+				return errors.WrapE(err, "normalize dataset id")
 			}
 			newDB.Close()
 
-			// 标记 arcset 状态
-			ready := "ready"
-			if err := arcStore.Update(context.Background(), a.Name, arcset.Update{Status: &ready}); err != nil {
-				return errors.WrapE(err, "update arcset status")
+			// Mark dataset as archived
+			if err := dsStore.UpdateStatus(context.Background(), ds.ID, "archived"); err != nil {
+				return errors.WrapE(err, "update dataset status")
 			}
 
-			// 标记关联 dataset 为 archived
-			dsStore := datasetpkg.NewSQLiteStore(sqlDB)
-			refs, err := arcStore.ListDatasetRefs(context.Background(), a.ID)
-			if err != nil {
-				return errors.WrapE(err, "list dataset refs")
-			}
-			for _, ref := range refs {
-				if err := dsStore.UpdateStatus(context.Background(), ref.ID, "archived"); err != nil {
-					return errors.WrapE(err, "update dataset status", "dataset", ref.Name)
-				}
-			}
-
-			fmt.Printf("arcset %s finalized: db=%s, %d shards, %d datasets archived\n",
-				a.Name, targetDB, len(shards), len(refs))
+			fmt.Printf("dataset %s finalized: db=%s, %d shards\n", ds.Name, targetDB, len(shards))
 			return nil
 		},
 	}
-	cmd.Flags().Int("id", 0, "arcset ID")
+	cmd.Flags().Int("id", 0, "dataset ID")
+	cmd.Flags().String("source-root", "", "root directory where shard files reside (default: dataset current_path)")
 	return cmd
 }
 
-func validateShardFile(currentPath, filePath, expected string) error {
-	absPath := filepath.Join(currentPath, filePath)
+func validateShardFile(absPath, expected string) error {
 	f, err := os.Open(absPath)
 	if err != nil {
 		return errors.WrapE(err, "open shard", "path", absPath)
@@ -117,7 +108,7 @@ func validateShardFile(currentPath, filePath, expected string) error {
 	}
 	actual := fmt.Sprintf("%x", h.Sum(nil))
 	if actual != expected {
-		return errors.E("shard checksum mismatch", "file", filePath,
+		return errors.E("shard checksum mismatch", "file", absPath,
 			"expected", expected, "actual", actual)
 	}
 	return nil

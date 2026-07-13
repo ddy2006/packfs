@@ -20,6 +20,22 @@ type File struct {
 	Dataset  int
 }
 
+// SegmentDesc describes a file portion to be packed into a shard.
+type SegmentDesc struct {
+	FilePath    string
+	FileSize    int64
+	FileOffset  int64
+	SegmentSize int64
+	FileID      int
+}
+
+// ShardDef groups segments from a single dataset into one shard.
+type ShardDef struct {
+	Seq       int
+	DatasetID int
+	Segments  []SegmentDesc
+}
+
 // Filter for querying datasets.
 type Filter struct {
 	ID    *int

@@ -1,6 +1,9 @@
 package shard
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // Shard represents a row in the t_shard table.
 type Shard struct {
@@ -12,8 +15,8 @@ type Shard struct {
 	Checksum  string
 	Metadata  map[string]any
 	LastCheck time.Time
-	Arcset    int
-	Dataset   int
+	Arcset    sql.NullInt64
+	Dataset   sql.NullInt64
 }
 
 // UnpackInfo is a segment position + original file path, used for unpacking.

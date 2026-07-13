@@ -159,8 +159,8 @@ func TestAddFileRecordAndListFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file in current dir, got %d", len(files))
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(files))
 	}
 	if files[0].FilePath != "file1.txt" {
 		t.Errorf("got file %q, want file1.txt", files[0].FilePath)
@@ -201,8 +201,8 @@ func TestCreateFromDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
-	if len(gotFiles) != 2 {
-		t.Errorf("expected 2 root-level files, got %d", len(gotFiles))
+	if len(gotFiles) != 3 {
+		t.Errorf("expected 3 files, got %d", len(gotFiles))
 	}
 
 	var total int

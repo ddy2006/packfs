@@ -1,89 +1,40 @@
-package arcset
+package shard
 
 import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/ddy2006/packfs/internal/arcset"
-	"github.com/ddy2006/packfs/internal/db"
-	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/kdomanski/iso9660"
 	"github.com/klauspost/compress/zstd"
-	"github.com/spf13/cobra"
 	"github.com/ulikunitz/xz"
 )
 
-func unpackCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "unpack",
-		Short: "Unpack arcset",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name, _ := cmd.Flags().GetString("name")
-			if name == "" {
-				return errors.NewUsage("--name is required")
-			}
-			sourceRoot, _ := cmd.Flags().GetString("source-root")
-			if sourceRoot == "" {
-				return errors.NewUsage("--source-root is required")
-			}
-			targetRoot, _ := cmd.Flags().GetString("target-root")
-			if targetRoot == "" {
-				return errors.NewUsage("--target-root is required")
-			}
-
-			sqlDB, err := db.OpenSQLite()
-			if err != nil {
-				return errors.WrapE(err, "open database")
-			}
-			defer sqlDB.Close()
-
-			arcStore := arcset.NewSQLiteStore(sqlDB)
-			a, err := arcStore.FindByName(context.Background(), name)
-			if err != nil {
-				return errors.WrapE(err, "find arcset")
-			}
-
-			shardStore := shard.NewSQLiteStore(sqlDB)
-			shards, err := shardStore.FindByArcset(context.Background(), a.ID)
-			if err != nil {
-				return errors.WrapE(err, "find shards")
-			}
-
-			compress, _ := a.Metadata["compress"].(string)
-			format, _ := a.Metadata["format"].(string)
-			if format == "" {
-				format = "bin"
-			}
-			var totalFiles int
-			for _, sh := range shards {
-				shardAbsPath := filepath.Join(sourceRoot, sh.FilePath)
-				count, err := unpackShardFile(shardStore, sh.ID, shardAbsPath, targetRoot, compress, format)
-				if err != nil {
-					return errors.WrapE(err, "unpack shard", "path", sh.FilePath)
-				}
-				totalFiles += count
-			}
-
-			fmt.Printf("unpacked %d files from arcset %s (%d shards)\n", totalFiles, name, len(shards))
-			return nil
-		},
+// DecompressAll decompresses data using zstd or xz based on isXZ flag.
+func DecompressAll(data []byte, isXZ bool) ([]byte, error) {
+	if isXZ {
+		r, err := xz.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		return io.ReadAll(r)
 	}
-	cmd.Flags().String("source-root", "", "source root directory where shard files reside")
-	cmd.Flags().String("target-root", "", "target root directory for extracted files")
-	cmd.Flags().String("name", "", "arcset name")
-	cmd.Flags().Int("dataset-id", 0, "filter by dataset ID")
-	cmd.Flags().String("dataset-name", "", "filter by dataset name")
-	return cmd
+	r, err := zstd.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
 }
 
-func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
-	infos, err := shardStore.ListUnpackInfo(context.Background(), shardID)
+// UnpackShardFile unpacks a single shard file into targetRoot directory.
+// Returns the number of files extracted.
+func UnpackShardFile(ctx context.Context, store Store, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
+	infos, err := store.ListUnpackInfo(ctx, shardID)
 	if err != nil {
 		return 0, err
 	}
@@ -97,10 +48,11 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 	isSegmentCompress := compress == "segment:zstd" || compress == "segment:xz"
 	isXZ := compress == "xz" || compress == "segment:xz"
 
+	// tar format
 	if format == "tar" {
 		var data []byte = src
 		if isShardCompress {
-			data, err = decompressAll(src, isXZ)
+			data, err = DecompressAll(src, isXZ)
 			if err != nil {
 				return 0, errors.WrapE(err, "decompress shard")
 			}
@@ -131,7 +83,7 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 			}
 
 			if isSegmentCompress {
-				content, err = decompressAll(content, isXZ)
+				content, err = DecompressAll(content, isXZ)
 				if err != nil {
 					return 0, errors.WrapE(err, "decompress segment", "file", hdr.Name)
 				}
@@ -145,10 +97,11 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 		return count, nil
 	}
 
+	// iso format
 	if format == "iso" {
 		var data []byte = src
 		if isShardCompress {
-			data, err = decompressAll(src, isXZ)
+			data, err = DecompressAll(src, isXZ)
 			if err != nil {
 				return 0, errors.WrapE(err, "decompress shard")
 			}
@@ -167,9 +120,10 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 		return extractISO(root, targetRoot, "", isSegmentCompress, isXZ)
 	}
 
+	// bin format
 	var decompressed []byte
 	if isShardCompress {
-		decompressed, err = decompressAll(src, isXZ)
+		decompressed, err = DecompressAll(src, isXZ)
 		if err != nil {
 			return 0, errors.WrapE(err, "decompress shard")
 		}
@@ -185,7 +139,7 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 		if isShardCompress {
 			data = decompressed[info.Offset : info.Offset+info.Size]
 		} else if info.Csize > 0 {
-			data, err = decompressAll(src[info.Offset:info.Offset+info.Csize], isXZ)
+			data, err = DecompressAll(src[info.Offset:info.Offset+info.Csize], isXZ)
 			if err != nil {
 				return 0, errors.WrapE(err, "decompress segment", "file", info.FilePath)
 			}
@@ -198,22 +152,6 @@ func unpackShardFile(shardStore *shard.SQLiteStore, shardID int, shardAbsPath, t
 		}
 	}
 	return len(infos), nil
-}
-
-func decompressAll(data []byte, isXZ bool) ([]byte, error) {
-	if isXZ {
-		r, err := xz.NewReader(bytes.NewReader(data))
-		if err != nil {
-			return nil, err
-		}
-		return io.ReadAll(r)
-	}
-	r, err := zstd.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	return io.ReadAll(r)
 }
 
 func extractISO(dir *iso9660.File, targetRoot, prefix string, isSegmentCompress, isXZ bool) (int, error) {
@@ -244,7 +182,7 @@ func extractISO(dir *iso9660.File, targetRoot, prefix string, isSegmentCompress,
 		}
 
 		if isSegmentCompress {
-			content, err = decompressAll(content, isXZ)
+			content, err = DecompressAll(content, isXZ)
 			if err != nil {
 				return count, errors.WrapE(err, "decompress segment", "file", childRel)
 			}
