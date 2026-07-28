@@ -82,10 +82,12 @@ func TestCreateArcset(t *testing.T) {
 		Name:       "arc1",
 		Label:      "测试归档集",
 		Metadata:   map[string]any{"shard_max_bytes": int64(1024), "format": "bin"},
-		DatasetIDs: []int{dsID},
 	}
 	if _, err := arcset.CreateArcset(ctx, store, params); err != nil {
 		t.Fatalf("CreateArcset: %v", err)
+	}
+	if err := store.AddDataset(ctx, 1, dsID); err != nil {
+		t.Fatalf("AddDataset: %v", err)
 	}
 
 	a, err := store.FindByName(ctx, "arc1")

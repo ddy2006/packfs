@@ -16,7 +16,7 @@ import (
 //
 //	cd examples/astro
 //	bash simulate.sh
-//	SQLITE_DB=./packfs.db PACKFS_BIN=./packfs bash pack-serial.sh
+//	SQLITE_DB=./packfs.db bash pack-serial.sh
 //
 // Run:
 //

@@ -54,7 +54,7 @@ func PlanStripes(dataFiles []string, cfg Config, outputDir string) ([][]StripeFi
 			}
 			if idx < len(dataFiles) {
 				sf.OrigPath = dataFiles[idx]
-				base := filepath.Base(dataFiles[idx])
+				base := stripECPrefix(filepath.Base(dataFiles[idx]))
 				sf.NewPath = filepath.Join(dir, fmt.Sprintf("%dD%d_%s", s+1, pos+1, base))
 			} else {
 				sf.NewPath = filepath.Join(dir, fmt.Sprintf("%dD%d_pad.%s", s+1, pos+1, ext))
@@ -239,8 +239,34 @@ func padTo(b []byte, n int) []byte {
 
 func extractExt(filename string) string {
 	base := filepath.Base(filename)
+	base = stripECPrefix(base)
 	if idx := strings.IndexByte(base, '.'); idx >= 0 {
 		return base[idx+1:]
 	}
 	return "bin"
+}
+
+// stripECPrefix removes a leading EC naming prefix (e.g. "1D1_") from a
+// filename. This makes PlanStripes idempotent across rebuild calls where
+// data shards have already been renamed by a previous make-ec run.
+func stripECPrefix(name string) string {
+	// Pattern: <digits>D<digits>_  or  <digits>E<digits>_
+	for i, c := range name {
+		if c >= '0' && c <= '9' {
+			continue
+		}
+		if (c == 'D' || c == 'E') && i > 0 && i+1 < len(name) && name[i+1] >= '0' && name[i+1] <= '9' {
+			// Find the underscore separator
+			for j := i + 1; j < len(name); j++ {
+				if name[j] == '_' {
+					return name[j+1:]
+				}
+				if name[j] < '0' || name[j] > '9' {
+					break
+				}
+			}
+		}
+		break
+	}
+	return name
 }

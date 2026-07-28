@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/kaichao/gopkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -14,10 +13,10 @@ type CreateArcsetParams struct {
 	Label       string
 	CurrentPath string
 	Metadata    map[string]any
-	DatasetIDs  []int
 }
 
-// CreateArcset creates an arcset record and links it to the given datasets.
+// CreateArcset creates an arcset record (no dataset linking at create time;
+// use AppendDataset to add datasets later).
 func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) (*Arcset, error) {
 	metadata := params.Metadata
 	if metadata == nil {
@@ -39,12 +38,6 @@ func CreateArcset(ctx context.Context, store Store, params CreateArcsetParams) (
 		return nil, err
 	}
 
-	for _, dsID := range params.DatasetIDs {
-		if err := store.AddDataset(ctx, a.ID, dsID); err != nil {
-			return nil, errors.WrapE(err, "link dataset", "arcset", a.Name, "dataset_id", dsID)
-		}
-	}
-
-	logrus.Infof("created arcset %s with %d datasets", a.Name, len(params.DatasetIDs))
+	logrus.Infof("created arcset %s", a.Name)
 	return a, nil
 }

@@ -39,8 +39,8 @@ ER 图：![ER 图](../packfs-erd.svg)
 | id | INTEGER PK | |
 | name | VARCHAR | |
 | label | VARCHAR | |
-| status | VARCHAR | `active` / `archived` |
-| metadata | JSON | 含 `num_files`、`total_bytes` |
+| status | VARCHAR | `active` / `archived` / `absorbed` |
+| metadata | JSON | 含 `num_files`、`total_bytes`、`format`、`compress`、`shard_max_bytes` |
 | current_path | VARCHAR | 文件实际存放路径 |
 | comment | TEXT | |
 
@@ -51,8 +51,8 @@ ER 图：![ER 图](../packfs-erd.svg)
 | id | INTEGER PK | |
 | name | VARCHAR | |
 | label | VARCHAR | |
-| status | VARCHAR | `building` / `complete` / `ready` |
-| metadata | JSON | 见下方 metadata 定义 |
+| status | VARCHAR | `building` / `complete` / `ready` / `taped` |
+| metadata | JSON | 含 `tape_max_bytes`、`ec`、`total_bytes` 等 |
 | current_path | VARCHAR | shard 输出目录 |
 | last_check | DATETIME | |
 | comment | TEXT | |
@@ -63,16 +63,17 @@ ER 图：![ER 图](../packfs-erd.svg)
 |----|------|------|
 | id | INTEGER PK | |
 | seq | SMALLINT | 序号 |
-| file_path | TEXT | 相对 arcset.current_path 的路径 |
+| file_path | TEXT | 相对 current_path 的路径 |
 | file_size | BIGINT | |
-| type | VARCHAR | DATA / EC |
+| type | VARCHAR | DATA / EC / PAD |
 | checksum | VARCHAR | SHA-256 |
-| metadata | JSON | 含 `shard_type` |
+| metadata | JSON | 含 `stripe`、`position`、`padded_size`、`original_size` 等 |
 | last_check | DATETIME | |
-| arcset | INTEGER FK | NOT NULL |
-| dataset | INTEGER FK | NOT NULL |
+| arcset | INTEGER FK | NULLABLE，关联 t_arcset |
+| dataset | INTEGER FK | NULLABLE，关联 t_dataset |
 
-唯一索引：`(arcset, dataset, file_path)`
+CHECK 约束：`dataset IS NOT NULL OR arcset IS NOT NULL`（至少关联一方）。
+条件唯一索引：`WHERE dataset IS NOT NULL`（dataset shard 唯一）、`WHERE arcset IS NOT NULL`（arcset shard 唯一）。
 
 ### t_segment
 
@@ -94,15 +95,13 @@ ER 图：![ER 图](../packfs-erd.svg)
 | 属性 | 说明 |
 |------|------|
 | create_time | 创建时间 |
-| format | `bin` / `tar` / `iso`，缺省 `bin` |
-| compress | 压缩配置，缺省空=不压缩。shard 级省略前缀，segment 级标注 `segment:`。例：`zstd`、`segment:zstd`、`zstd_seekable`、`xz` |
-| shard_max_bytes | shard 最大字节数 |
-| shard_count | 预期最少 shard 数（`gen-def` 自动写入） |
-| tape_max_bytes | 磁带大小（字节数） |
 | ec | Erasure Code 参数，例 `8+4` |
-| total_bytes | 所有 dataset 原始文件总字节数 |
+| tape_max_bytes | 磁带大小（字节数） |
+| shard_max_bytes | shard 最大字节数（首次 append 时从 dataset 继承） |
+| shard_count | 预期最少 shard 数 |
+| total_bytes | 所有关联 dataset 原始文件总字节数 |
 | sum_bytes | 所有 shard 总字节数 |
-| net_bytes | 数据 shard（排除 EC）总字节数 |
+| net_bytes | 数据 shard 总字节数 |
 
 #### dataset
 
@@ -110,6 +109,10 @@ ER 图：![ER 图](../packfs-erd.svg)
 |------|------|
 | num_files | 文件总数量 |
 | total_bytes | 数据集总数据量 |
+| format | `bin` / `tar` / `iso`，缺省 `bin` |
+| compress | 压缩配置。shard 级：`zstd`、`xz`；segment 级：`segment:zstd`、`segment:xz`；缺省空=不压缩 |
+| shard_max_bytes | shard 最大字节数，0=不限制 |
+| shard_count | shard 数量 |
 
 #### file
 
@@ -123,7 +126,10 @@ ER 图：![ER 图](../packfs-erd.svg)
 
 | 属性 | 说明 |
 |------|------|
-| shard_type | `DATA` / `EC` |
+| stripe | EC 条带编号（1-based） |
+| position | 条带内位置（1-based，1..k 为 DATA，k+1..k+m 为 EC） |
+| padded_size | 零填充对齐后的统一大小 |
+| original_size | 数据 shard 原始字节数（去 padding 用） |
 | data_bytes | 所有 segment 原始字节总和 |
 
 ## Shard 定义文件（.def）
@@ -139,49 +145,42 @@ ER 图：![ER 图](../packfs-erd.svg)
 ### 内容格式
 
 ```
-# arcset_id: 1
 # dataset_id: 3
 相对路径/a.txt
 相对路径/b.txt
 ```
 
-- `# arcset_id` / `# dataset_id`：由 `gen-def` 自动写入
+- `# dataset_id`：由 gen-def 自动写入；`# arcset_id`（可选）：arcset 模式下由 gen-def 写入
 - 后续每行一个相对路径（相对于 `dataset.current_path`）
 - 一个 shard 不跨多个 dataset
 - 也支持 JSON 行：`{"path":"...","offset":0,"size":1024}`，`offset`/`size` 选填
 
 ### gen-def：双模式
 
-**1. 内置模式**（缺省，数据保存场景）：
+**1. 内置模式**（缺省）：
 
 ```sh
-packfs dataset create --gen-only --target-root=/output --id=1
+packfs dataset create --root-dir=/data --shard-max-bytes=1073741824
 ```
 
-1. 按 dataset 分组
-2. 组内文件按路径排序，累加超过 `shard_max_bytes` 时关闭当前 shard
-3. 单个文件超过 `shard_max_bytes` 时拆分多段，每段一个 segment。不超时文件保持完整
-4. 序号从 0 开始，4 位整数命名
-5. 拆分片段在 .def 中用 JSON 格式表示（`{"path":"...","offset":0,"size":1024}`），完整文件用纯路径
+`dataset create` 自动扫描目录 → `GenerateShardDefs` 分组 → `MakeShard` 打包，一步到位，不写 .def 文件。
 
 **2. 脚本模式**（自定义分组场景）：
 
 ```sh
-packfs dataset create --gen-only --target-root=/output --id=1 --script=./my-gen.sh
+# 第一步：仅扫描
+packfs dataset create --root-dir=/data --gen-only
+
+# 第二步：外部脚本生成 .def 文件
+bash ./gen-def.sh --dataset-id=1 --target-root=./data/def
+
+# 第三步：打包
+packfs shard make --def-file=./data/def/0000.tar.def --output-dir=./data/shard
 ```
 
-gen-def 执行外部脚本：
-
-```
-./my-gen.sh --id=1 --target-root=/output
-```
-
-- 脚本自行连接 DB（`SQLITE_DB` 环境变量）、查询 `t_file`、生成 .def 文件到 `target-root/`
-- .def 格式需遵守标准：`# arcset_id` + `# dataset_id` 头 + 路径行
-- 脚本 stdout 输出 shard 数量（纯数字），gen-def 据此写入 `metadata["shard_count"]`
-- 脚本退出码 0=成功，非 0=失败
-
-**两种模式最后都执行**：统计 target-root 下的 .def 文件数，写入 `metadata["shard_count"]`。
+- 外部脚本自行连接 DB（`SQLITE_DB` 环境变量）、查询 `t_file`、生成 .def 文件
+- .def 格式需遵守标准：`# dataset_id` 头 + 路径行 / JSON segment 行
+- 参考实现：`examples/astro/gen-def.sh`（按 channel 分组，40 文件/shard）
 
 ## 压缩
 
@@ -199,30 +198,59 @@ gen-def 执行外部脚本：
 ## 状态机
 
 ```
-dataset:   active ──> archived
-               (arcset finalize 后)
+dataset:   active ──> archived        (dataset finalize 后)
+              └─────> absorbed        (make-ec 后)
 
-arcset:    building ──> complete ──> ready
-               (validate 全过)  (finalize)
+arcset:    building ──> complete ──> ready ──> taped
+               (validate 全过)  (finalize)  (写入磁带)
 ```
 
 | 状态 | 实体 | 含义 |
 |------|------|------|
 | `active` | dataset | 文件在 current_path，可直接访问 |
-| `archived` | dataset | 数据已打包到 shard，需通过 arcset mount 访问 |
-| `building` | arcset | dataset 已关联，shard 正在生成 |
+| `archived` | dataset | 数据已打包到 shard |
+| `absorbed` | dataset | 数据已通过 EC 编码写入 arcset，原始 shard 不再独立管理 |
+| `building` | arcset | dataset 已关联，shard / EC 正在生成 |
 | `complete` | arcset | 所有 shard 完成且校验通过 |
-| `ready` | arcset | 已封存：DB 已复制到 current_path，arcset_id 归一为 1，目录自包含 |
+| `ready` | arcset | 已封存：DB 已复制到 current_path，目录自包含 |
+| `taped` | arcset | 已写入物理磁带 |
 
-### finalize 流程
+## 纠删码（EC）
+
+基于 Reed-Solomon，将 k 个 data shard 编码为 k+m 个 shard，允许丢失任意 ≤m 个。
+
+**参数约束**：k+m ≤ 255（RS 硬限制）、k ≤ 24（工程上限）、m ∈ {2,4,6}。
+
+**EC 文件命名**：`<stripe>D<position>_<原名>`（数据）/ `<stripe>E<position>.<ext>`（校验）/ `<stripe>D<position>_pad.<ext>`（填充）。
+
+**流程**：
+```
+1. arcset create --ec=8+4
+2. arcset append（关联 dataset，校验 format/compress 兼容性）
+3. shard make-ec --arcset-id=1
+   └─ PlanStripes → EncodeStripe → 更新 t_shard → dataset → absorbed
+```
+
+**恢复**：
+```sh
+shard recover --arcset-id=1 --shard-file=1D1_0000.tar
+```
+定位 stripe/position → 收集存活 shard → ReconstructStripe → VerifyStripe。
+
+**重编码**（修改 EC 参数）：
+```sh
+arcset rebuild --id=1 --ec=12+4
+```
+删旧 EC/PAD → 重置 status → 重新 make-ec。
+
+### Dataset Finalize 流程
 
 1. 校验所有 shard checksum
 2. 确认 `COUNT(t_shard) >= metadata["shard_count"]`
 3. 复制 `SQLITE_DB` → `current_path/packfs.db`
-4. 新 DB：`UPDATE t_arcset SET id=1, current_path='.'`
-5. arcset status → `ready`，关联 dataset → `archived`
+4. dataset status → `archived`
 
-封存后 `current_path/` 自包含：`packfs.db` + shard 文件，可直接分发、挂载。
+封存后 `current_path/` 自包含：`packfs.db` + shard 文件，可直接分发。
 
 ### shard_count 检查
 

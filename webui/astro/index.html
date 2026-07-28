@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>packfs · Astro Dataset</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    /* ====== Astro 专属样式 ====== */
+
+    /* 数据来源标签 */
+    .source-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 0;
+      font-size: .82rem;
+      color: var(--text-muted);
+    }
+    .source-bar .badge { font-size: .78rem; }
+
+    /* Shard 矩阵 */
+    .matrix-wrap { overflow-x: auto; padding: 8px 0; }
+    .matrix-table { border-collapse: collapse; font-size: .68rem; font-family: "SF Mono","Fira Code","Consolas",monospace; }
+    .matrix-table th {
+      position: sticky; top: 0;
+      background: #fff;
+      padding: 6px 4px;
+      font-size: .65rem;
+      color: var(--text-muted);
+      border-bottom: 2px solid var(--border);
+      writing-mode: vertical-lr;
+      text-orientation: mixed;
+      max-height: 120px;
+      white-space: nowrap;
+    }
+    .matrix-table td {
+      padding: 2px 3px;
+      border: 1px solid #f0f0f0;
+      text-align: center;
+      min-width: 14px;
+      height: 14px;
+    }
+    .matrix-table td.filled { border-radius: 2px; }
+    .matrix-table td.empty { background: transparent; }
+    .matrix-table .row-label {
+      text-align: right;
+      color: var(--text-muted);
+      font-size: .62rem;
+      padding-right: 6px;
+      white-space: nowrap;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      position: sticky; left: 0;
+      background: #fff;
+    }
+    .matrix-table .col-total {
+      font-size: .6rem;
+      color: var(--text-muted);
+      padding: 2px 4px;
+      font-weight: 600;
+    }
+
+    /* 热度色阶 */
+    .heat-0 { background: #f0f4ff; }
+    .heat-1 { background: #d6e4ff; }
+    .heat-2 { background: #b3d4ff; }
+    .heat-3 { background: #80bfff; }
+    .heat-4 { background: #4da6ff; }
+    .heat-5 { background: #1a8cff; }
+    .heat-6 { background: #0073e6; color: #fff; }
+    .heat-7 { background: #0059b3; color: #fff; }
+    .heat-8 { background: #003d80; color: #fff; }
+
+    /* Channel 标签 */
+    .ch-tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: .7rem;
+      font-weight: 600;
+      margin: 1px;
+    }
+    .ch-tag:nth-child(24n+1)  { background: #e3f2fd; color: #1565c0; }
+    .ch-tag:nth-child(24n+2)  { background: #fce4ec; color: #c62828; }
+    .ch-tag:nth-child(24n+3)  { background: #e8f5e9; color: #2e7d32; }
+    .ch-tag:nth-child(24n+4)  { background: #fff3e0; color: #e65100; }
+    .ch-tag:nth-child(24n+5)  { background: #f3e5f5; color: #7b1fa2; }
+    .ch-tag:nth-child(24n+6)  { background: #e0f7fa; color: #00838f; }
+    .ch-tag:nth-child(24n+7)  { background: #fff8e1; color: #f57f17; }
+    .ch-tag:nth-child(24n+8)  { background: #f1f8e9; color: #558b2f; }
+
+    /* 统计卡片 */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat-card {
+      background: #f8f9fc;
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-align: center;
+      border: 1px solid var(--border);
+    }
+    .stat-card .stat-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .stat-card .stat-label {
+      font-size: .75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .stat-card .stat-sub {
+      font-size: .7rem;
+      color: var(--text-muted);
+    }
+
+    /* 加载 / 空状态 */
+    .loading { text-align: center; padding: 32px; color: var(--text-muted); }
+    .loading .spinner {
+      display: inline-block;
+      width: 24px; height: 24px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      margin-bottom: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 详情弹窗 */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.4);
+      z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 600px; max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal h3 { margin-bottom: 12px; }
+    .modal .close {
+      float: right;
+      background: none; border: none;
+      font-size: 1.2rem; cursor: pointer;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <h1 class="logo">packfs <span style="font-weight:400;font-size:1.2rem;color:rgba(255,255,255,.5)">· Astro</span></h1>
+      <p class="tagline">SKA 射电天文数据 · 962 文件 · 24 Channel · 24 Shard</p>
+      <div class="mode-badge">
+        <span class="dot" style="background:#2ecc71"></span> 真实数据
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav" id="nav">
+    <button class="nav-btn active" data-tab="overview">📊 概览</button>
+    <button class="nav-btn" data-tab="shards">📦 Shard 矩阵</button>
+    <button class="nav-btn" data-tab="channels">📡 Channel 分组</button>
+    <button class="nav-btn" data-tab="files">📄 文件清单</button>
+  </nav>
+
+  <main class="container">
+    <div class="source-bar">
+      <strong>数据源:</strong>
+      <span class="badge badge-active">examples/astro/packfs.db</span>
+      <span>→</span>
+      <span>dataset: 1177938016</span>
+      <span>· tar + zstd</span>
+      <span>· shard_max_bytes: 0</span>
+      <span>· status: archived</span>
+      <span style="margin-left:auto" id="data-info">加载中...</span>
+    </div>
+
+    <!-- ====== Tab: 概览 ====== -->
+    <section class="tab-content active" id="tab-overview">
+      <div class="stat-grid" id="stat-cards"></div>
+      <div class="card">
+        <h2 class="card-title">Shard 按 Channel 分布</h2>
+        <div class="matrix-wrap" id="channel-overview"></div>
+      </div>
+    </section>
+
+    <!-- ====== Tab: Shard 矩阵 ====== -->
+    <section class="tab-content" id="tab-shards">
+      <div class="card">
+        <h2 class="card-title">文件 → Shard 映射矩阵</h2>
+        <p class="card-desc">每行=一个文件，每列=一个 Shard（Channel），有颜色的格子表示该文件被打包进该 Shard。</p>
+        <div class="matrix-wrap" id="shard-matrix-container">
+          <div class="loading"><div class="spinner"></div>渲染矩阵中...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== Tab: Channel 分组 ====== -->
+    <section class="tab-content" id="tab-channels">
+      <div class="card" id="channel-detail-card">
+        <h2 class="card-title">Channel 详情</h2>
+        <p class="card-desc">24 个 Channel（133–156），每个 Channel 40 个时间片，打包为 1 个 Shard。</p>
+        <div id="channel-details"></div>
+      </div>
+    </section>
+
+    <!-- ====== Tab: 文件清单 ====== -->
+    <section class="tab-content" id="tab-files">
+      <div class="card">
+        <h2 class="card-title">全部文件（962 条）</h2>
+        <div style="max-height:600px;overflow-y:auto">
+          <table class="table" id="files-table">
+            <thead><tr><th>ID</th><th>路径</th><th>大小</th><th>Channel</th></tr></thead>
+            <tbody id="files-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 详情弹窗 -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal-content"></div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="cli-bar">
+        <span class="cli-prefix">$</span>
+        <span id="cli-cmd">packfs dataset create --root-dir=examples/astro/data/dat/1177938016 --format=tar --compress=zstd</span>
+        <button class="btn-copy" id="btn-copy" title="复制命令">📋</button>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/astro-app.js"></script>
+</body>
+</html>
