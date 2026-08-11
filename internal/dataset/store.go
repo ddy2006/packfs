@@ -12,6 +12,9 @@ type Store interface {
 	FindByName(ctx context.Context, name string) (*Dataset, error)
 	Find(ctx context.Context, filter Filter) ([]*Dataset, error)
 
+	// Delete deletes a dataset and its associated file records.
+	Delete(ctx context.Context, id int) error
+
 	// File records
 	AddFileRecord(ctx context.Context, f *File) error
 	BatchAddFileRecords(ctx context.Context, files []*File) error

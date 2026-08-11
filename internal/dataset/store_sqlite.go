@@ -170,6 +170,46 @@ func (s *SQLiteStore) scanRow(rows *sql.Rows) (*Dataset, error) {
 	return ds, nil
 }
 
+func (s *SQLiteStore) Delete(ctx context.Context, id int) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.WrapE(err, "begin tx")
+	}
+	defer tx.Rollback()
+
+	// Delete segments belonging to this dataset's shards
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM t_segment WHERE shard IN (SELECT id FROM t_shard WHERE dataset = ?)`, id); err != nil {
+		return errors.WrapE(err, "delete segments")
+	}
+
+	// Delete shards belonging to this dataset
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM t_shard WHERE dataset = ?`, id); err != nil {
+		return errors.WrapE(err, "delete shards")
+	}
+
+	// Delete arcset-dataset links
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM r_arcset_dataset WHERE dataset = ?`, id); err != nil {
+		return errors.WrapE(err, "delete arcset links")
+	}
+
+	// Delete file records
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM t_file WHERE dataset = ?`, id); err != nil {
+		return errors.WrapE(err, "delete files")
+	}
+
+	// Delete the dataset itself
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM t_dataset WHERE id = ?`, id); err != nil {
+		return errors.WrapE(err, "delete dataset")
+	}
+
+	return errors.WrapE(tx.Commit(), "commit")
+}
+
 func (s *SQLiteStore) UpdateStatus(ctx context.Context, id int, status string) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE t_dataset SET status = ? WHERE id = ?`, status, id)

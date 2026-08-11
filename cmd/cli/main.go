@@ -7,6 +7,7 @@ import (
 	"github.com/ddy2006/packfs/cmd/cli/dataset"
 	"github.com/ddy2006/packfs/cmd/cli/fs"
 	"github.com/ddy2006/packfs/cmd/cli/shard"
+	"github.com/ddy2006/packfs/cmd/cli/webui"
 )
 
 func main() {
@@ -14,5 +15,6 @@ func main() {
 	rootCmd.AddCommand(arcset.Command())
 	rootCmd.AddCommand(shard.Command())
 	rootCmd.AddCommand(fs.Command())
+	rootCmd.AddCommand(webui.Command())
 	os.Exit(executeRoot())
 }

@@ -5,12 +5,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 构建与测试
 
 ```sh
-go build ./...
+go build ./...                  # 全量编译
+go build -o packfs ./cmd/cli    # 编译 CLI 二进制
 go test ./internal/...          # 全部测试
 go test -v ./internal/dataset/  # 单包测试
 ```
 
 没有 Makefile（除 `build/postgres/Makefile` 用于 Docker 镜像外）。
+
+## WebUI
+
+```sh
+packfs serve --addr=:8080       # 启动管理面板，WebUI 编译进二进制
+# 浏览器打开 http://localhost:8080
+```
+
+- REST API 定义在 `internal/api/handler.go`（14 个端点）
+- 前端在 `webui/`，编译时通过 `embed.go` 的 `//go:embed all:webui` 嵌入
+- `cmd/cli/webui/serve.go`：serve 命令 + 路由注册
+- WebUI 与 CLI 共用 `internal/` Store 层，数据完全一致
+- 工作流管道展示完整流程：源目录 → Dataset → Shard → Arcset → EC → 磁带
 
 ## 项目概述
 
@@ -32,7 +46,12 @@ dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ─
 | `internal/` | 领域模型 + Store + 业务逻辑 | `internal/CLAUDE.md` |
 | `cmd/cli/` | CLI 适配层 + cobra 命令 | `cmd/cli/README.md`、`cmd/cli/CLAUDE.md` |
 | `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/todo.md` |
-| `webui/` | 纯前端管理面板（模拟模式） | `webui/README.md` |
+| `webui/` | 前端管理面板（真实 API 驱动） | `webui/README.md` |
+| `internal/api/` | REST handler，15 个端点 | 本文件 |
+| `internal/fuse/` | 只读 FUSE 文件系统（hanwen/go-fuse/v2） | 本文件 |
+| `internal/simulate/` | 仿真数据生成（crypto/rand） | 本文件 |
+| `cmd/cli/webui/` | `packfs serve` 命令 | 本文件 |
+| `cmd/cli/fs/` | `packfs fs mount` 命令 | 本文件 |
 | `build/` | SQL schema（pg/sqlite）、Docker | — |
 
 ## 数据库
@@ -104,6 +123,18 @@ EC 后的 shard 文件命名：
 - Data: `<stripe>D<position>_<原名>`（如 `1D1_0000.tar`）
 - EC:   `<stripe>E<position>.<ext>`（如 `1E3.tar`）
 - PAD:  `<stripe>D<position>_pad.<ext>`（如 `1D3_pad.tar`）
+
+## FUSE 挂载
+
+```sh
+packfs fs mount --dataset-id=1 --mount-point=/mnt/pk  # 只读挂载
+fusermount -u /mnt/pk                                   # 卸载
+```
+
+- 基于 `hanwen/go-fuse/v2`，只支持 bin 格式
+- 从 DB 构建 file_path → segment 偏移的内存索引
+- 无压缩直接 seek+read；segment 级压缩按需解压；shard 级压缩全量解压（慢）
+- 目录树从 file_path 自动推导（`fs-test/1_2_ch10.dat` → `/fs-test/1_2_ch10.dat`）
 
 ## Shard 定义文件（.def）
 

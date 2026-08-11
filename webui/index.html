@@ -14,13 +14,67 @@
       <p class="tagline">减少磁盘碎片 · 纠删码容错 · 零依赖嵌入</p>
       <!-- 连接状态指示器 -->
       <div class="mode-badge" id="mode-badge">
-        <span class="dot dot-sim"></span> 模拟模式
+        <span class="dot dot-sim" style="background:#f39c12"></span> 检测中...
       </div>
     </div>
   </header>
 
+  <!-- ====== 工作流管道 ====== -->
+  <div class="pipeline" id="pipeline">
+    <div class="pipeline-inner container">
+      <div class="pipe-step pending" data-tab="dataset" data-step="source">
+        <div class="pipe-icon">📁</div>
+        <div class="pipe-info">
+          <span class="pipe-label">源目录</span>
+          <span class="pipe-path" id="pipe-src">--</span>
+        </div>
+      </div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step pending" data-tab="dataset" data-step="dataset">
+        <div class="pipe-icon">📦</div>
+        <div class="pipe-info">
+          <span class="pipe-label">Dataset</span>
+          <span class="pipe-path" id="pipe-ds">扫描文件，写入 DB</span>
+        </div>
+      </div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step pending" data-tab="shard" data-step="shard">
+        <div class="pipe-icon">🔧</div>
+        <div class="pipe-info">
+          <span class="pipe-label">Shard 打包</span>
+          <span class="pipe-path" id="pipe-shard">合并小文件 → 大文件</span>
+        </div>
+      </div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step pending" data-tab="arcset" data-step="arcset">
+        <div class="pipe-icon">📚</div>
+        <div class="pipe-info">
+          <span class="pipe-label">Arcset</span>
+          <span class="pipe-path" id="pipe-arc">纠删码容器</span>
+        </div>
+      </div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step pending" data-tab="ec" data-step="ec">
+        <div class="pipe-icon">🛡️</div>
+        <div class="pipe-info">
+          <span class="pipe-label">EC 编码</span>
+          <span class="pipe-path" id="pipe-ec">RS(k+m) 冗余保护</span>
+        </div>
+      </div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step pending" data-tab="arcset" data-step="tape">
+        <div class="pipe-icon">💾</div>
+        <div class="pipe-info">
+          <span class="pipe-label">磁带归档</span>
+          <span class="pipe-path" id="pipe-tape">--</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ====== 主导航 ====== -->
   <nav class="nav" id="nav">
+    <button class="nav-btn" data-tab="simulate">🧪 仿真数据</button>
     <button class="nav-btn active" data-tab="dataset">📦 Dataset</button>
     <button class="nav-btn" data-tab="shard">🔧 Shard 打包</button>
     <button class="nav-btn" data-tab="ec">🛡️ EC 纠删码</button>
@@ -28,6 +82,57 @@
   </nav>
 
   <main class="container">
+
+    <!-- ================================================================ -->
+    <!-- Tab 0: 仿真数据生成                                              -->
+    <!-- ================================================================ -->
+    <section class="tab-content" id="tab-simulate">
+
+      <div class="card">
+        <h2 class="card-title">仿真数据生成</h2>
+        <p class="card-desc">
+          根据给定参数在磁盘上生成随机内容的 <code>.dat</code> 文件，用于测试打包流程。
+          生成后可直接在 Dataset 页签扫描创建。
+        </p>
+        <form class="form-grid" id="sim-form">
+          <div class="field">
+            <label for="sim-name">Dataset 名称 <span class="req">*</span></label>
+            <input type="text" id="sim-name" placeholder="例: 1177938016">
+          </div>
+          <div class="field">
+            <label for="sim-output-root">输出根目录 <span class="req">*</span></label>
+            <input type="text" id="sim-output-root" placeholder="例: ./data/dat" value="./data/dat">
+          </div>
+          <div class="field">
+            <label for="sim-start-ts">起始时间片 (start_ts)</label>
+            <input type="number" id="sim-start-ts" placeholder="例: 1177940019">
+          </div>
+          <div class="field">
+            <label for="sim-end-ts">结束时间片 (end_ts)</label>
+            <input type="number" id="sim-end-ts" placeholder="例: 1177940098">
+          </div>
+          <div class="field">
+            <label for="sim-ch-start">起始 Channel (ch_start)</label>
+            <input type="number" id="sim-ch-start" placeholder="例: 133">
+          </div>
+          <div class="field">
+            <label for="sim-ch-end">结束 Channel (ch_end)</label>
+            <input type="number" id="sim-ch-end" placeholder="例: 156">
+          </div>
+          <div class="field">
+            <label for="sim-file-bytes">单文件大小 (字节)</label>
+            <input type="number" id="sim-file-bytes" placeholder="例: 10240" value="10240">
+          </div>
+          <div class="field field-btn" style="grid-column: 1 / -1">
+            <button type="button" class="btn btn-secondary" id="btn-sim-preset">📋 SKA 预设</button>
+            <button type="submit" class="btn btn-primary">🚀 生成仿真数据</button>
+          </div>
+        </form>
+        <div class="cmd-hint" id="sim-cmd-hint"></div>
+        <div id="sim-result" style="margin-top:.75rem"></div>
+      </div>
+
+    </section>
 
     <!-- ================================================================ -->
     <!-- Tab 1: Dataset 管理                                              -->
@@ -41,7 +146,7 @@
         <form class="form-grid" id="ds-create-form">
           <div class="field">
             <label for="ds-root-dir">源目录 (--root-dir) <span class="req">*</span></label>
-            <input type="text" id="ds-root-dir" placeholder="/data/astro/1177938016" value="/data/astro/1177938016">
+            <input type="text" id="ds-root-dir" placeholder="例: ./data/dat" value="./data/dat">
           </div>
           <div class="field">
             <label for="ds-name">Dataset 名称 (--name)</label>
@@ -114,7 +219,7 @@
           </div>
           <div class="field">
             <label for="sh-output-dir">输出目录 (--output-dir，可选)</label>
-            <input type="text" id="sh-output-dir" placeholder="默认: dataset.current_path">
+            <input type="text" id="sh-output-dir" placeholder="默认: dataset 所在目录">
           </div>
           <div class="field field-btn">
             <button class="btn btn-secondary" id="btn-preview-shard">预览 Shard 分组</button>
@@ -134,10 +239,10 @@
         <h2 class="card-title">Shard 结果</h2>
         <table class="table" id="sh-table">
           <thead>
-            <tr><th>ID</th><th>文件名</th><th>大小</th><th>SHA-256</th><th>Segment 数</th><th>操作</th></tr>
+            <tr><th>ID</th><th>文件名</th><th>类型</th><th>大小</th><th>输出位置</th><th>Segment 数</th><th>操作</th></tr>
           </thead>
           <tbody id="sh-tbody">
-            <tr class="placeholder"><td colspan="6">暂无 Shard</td></tr>
+            <tr class="placeholder"><td colspan="7">暂无 Shard</td></tr>
           </tbody>
         </table>
       </div>
@@ -179,6 +284,16 @@
       <!-- EC 布局可视化 -->
       <div class="card" id="ec-preview-card" style="display:none">
         <h2 class="card-title">EC 条带布局</h2>
+        <p class="card-desc">
+          每个 Stripe（条带）包含 <strong id="ec-legend-k">k</strong> 个 data shard（大方块）+ <strong id="ec-legend-m">m</strong> 个 EC parity shard（小方块）。
+          丢失任意 ≤m 个方块仍可恢复。
+        </p>
+        <div class="ec-legend">
+          <div class="ec-legend-item"><span class="ec-legend-swatch data-swatch"></span> Data Shard（原始数据）</div>
+          <div class="ec-legend-item"><span class="ec-legend-swatch ec-swatch"></span> EC Parity（校验块）</div>
+          <div class="ec-legend-item"><span class="ec-legend-swatch pad-swatch"></span> PAD（填充占位）</div>
+          <div class="ec-legend-item"><span class="ec-legend-swatch lost-swatch"></span> 丢失 / 损坏</div>
+        </div>
         <div id="ec-preview"></div>
       </div>
 
@@ -215,7 +330,7 @@
           </div>
           <div class="field">
             <label for="as-target-root">目标目录 (--target-root) <span class="req">*</span></label>
-            <input type="text" id="as-target-root" placeholder="/data/arcset" value="/data/arcset">
+            <input type="text" id="as-target-root" placeholder="例: ./data/arcset" value="./data/arcset">
           </div>
           <div class="field">
             <label for="as-ec">EC 配置 (--ec)</label>
@@ -264,10 +379,10 @@
         <h2 class="card-title">Arcset 列表</h2>
         <table class="table" id="as-table">
           <thead>
-            <tr><th>ID</th><th>名称</th><th>EC 配置</th><th>Dataset 数</th><th>Shard 数</th><th>状态</th><th>操作</th></tr>
+            <tr><th>ID</th><th>名称</th><th>EC 配置</th><th>目标目录</th><th>Dataset 数</th><th>Shard 数</th><th>状态</th><th>操作</th></tr>
           </thead>
           <tbody id="as-tbody">
-            <tr class="placeholder"><td colspan="7">暂无 Arcset</td></tr>
+            <tr class="placeholder"><td colspan="8">暂无 Arcset</td></tr>
           </tbody>
         </table>
       </div>
@@ -280,13 +395,12 @@
     <div class="container">
       <div class="cli-bar" id="cli-bar">
         <span class="cli-prefix">$</span>
-        <span id="cli-cmd">packfs dataset create --root-dir=/data</span>
+        <span id="cli-cmd">packfs --help</span>
         <button class="btn-copy" id="btn-copy" title="复制命令">📋</button>
       </div>
     </div>
   </footer>
 
-  <script src="js/simulator.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

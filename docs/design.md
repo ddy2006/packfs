@@ -263,6 +263,49 @@ arcset rebuild --id=1 --ec=12+4
 | 实际 < 预期 | 报错拦截 |
 | 未设置 | 跳过检查 |
 
+## WebUI 管理面板
+
+`packfs serve --addr=:8080` 启动内嵌 HTTP server，WebUI 编译进二进制，零外部依赖。
+
+### 架构
+
+```
+浏览器 ── HTTP ──> packfs serve
+                    ├─ /api/*  → REST handler (internal/api/)
+                    └─ /*      → 内嵌静态文件 (//go:embed webui)
+```
+
+### REST API
+
+```
+GET    /api/health                    → 健康检查
+GET    /api/datasets                  → 列表
+POST   /api/datasets                  → 创建（扫描+打包）
+DELETE /api/datasets/{id}             → 删除（级联 t_file, t_shard, t_segment）
+POST   /api/datasets/{id}/finalize    → 归档
+GET    /api/datasets/{id}/files       → 文件列表
+
+GET    /api/arcsets                   → 列表
+POST   /api/arcsets                   → 创建
+POST   /api/arcsets/{id}/append       → 关联 dataset
+
+GET    /api/shards?dataset_id=...     → shard 列表
+GET    /api/ec/plan/{arcsetID}        → EC 条带布局
+POST   /api/ec/encode/{arcsetID}      → EC 编码
+POST   /api/ec/recover/{arcsetID}     → 丢失恢复
+```
+
+### 前端
+
+- 纯 HTML/CSS/JS，无框架
+- 工作流管道：页面顶部横向展示 `📁 源目录 → 📦 Dataset → 🔧 Shard → 📚 Arcset → 🛡️ EC → 💾 磁带`
+- EC 可视化：data shard 大方块 + EC parity 小方块，丢失/恢复状态颜色区分
+- CLI 命令栏：实时显示对应 packfs 命令，可一键复制
+
+### 与 CLI 的关系
+
+WebUI 和 CLI 共用 `internal/` 下的 Store 和业务逻辑，数据完全一致。WebUI 上创建、删除、EC 编码等操作等同于执行 CLI 命令。
+
 ## 幂等性
 
 `shard make` 使用 `INSERT ... ON CONFLICT(arcset, dataset, file_path) DO UPDATE`，重复运行覆盖原记录（id 不变）。`t_segment` 使用 `DELETE` + 批量 `INSERT`（事务内），确保每次重写的完整替换。
