@@ -6,4 +6,4 @@ ENV POSTGRES_DB=packfs \
     POSTGRES_USER=packfs \
     POSTGRES_PASSWORD=changeme
 
-COPY initdb.d/[0-9]*.sql initdb.d/[0-9]*.sh /docker-entrypoint-initdb.d/
+COPY arcset_schema.sql /docker-entrypoint-initdb.d/00-arcset.sql

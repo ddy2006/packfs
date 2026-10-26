@@ -31,12 +31,13 @@ packfs serve --addr=:8080       # 启动管理面板，WebUI 编译进二进制
 packfs 是一个文件打包系统，将目录中的小文件合并成大文件（shard），减少磁盘碎片。支持 EC 纠删码（Reed-Solomon），允许丢失 ≤m 个 shard 仍可恢复。
 
 ```
-dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ──> file
+dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_ref──> arcset
+       └── DATA shard ──> segment ──> file
 ```
 
-- **dataset**：不可变文件集合，从磁盘目录扫描创建，持有存储配置（format/compress/shard_max_bytes）
-- **arcset**：EC 纠删码容器，多个 dataset 通过 append 关联
-- **shard**：打包大文件，由多个 segment 组成，含 SHA-256 checksum。支持 bin / tar / iso 三种格式，DATA / EC / PAD 三种类型
+- **dataset**：不可变文件集合；每个 dataset 一个 SQLite，持有 file/segment/DATA shard 与存储配置（format/compress/shard_max_bytes）
+- **arcset**：EC 纠删码容器，元数据在全局 PostgreSQL；多个 dataset 通过 append 关联
+- **shard**：打包大文件，由多个 segment 组成，含 SHA-256 checksum。dataset 层只有 DATA；arcset 层有 DATA / EC / PAD
 - **segment**：shard 内一个片段，对应源文件的某个字节范围
 
 ## 目录结构
@@ -45,7 +46,7 @@ dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ─
 |------|------|------|
 | `internal/` | 领域模型 + Store + 业务逻辑 | `internal/CLAUDE.md` |
 | `cmd/cli/` | CLI 适配层 + cobra 命令 | `cmd/cli/README.md`、`cmd/cli/CLAUDE.md` |
-| `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/todo.md` |
+| `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/design/`、`docs/todo.md` |
 | `webui/` | 前端管理面板（真实 API 驱动） | `webui/README.md` |
 | `internal/api/` | REST handler，15 个端点 | 本文件 |
 | `internal/fuse/` | 只读 FUSE 文件系统（hanwen/go-fuse/v2） | 本文件 |
@@ -58,59 +59,56 @@ dataset ──(r_arcset_dataset)──> arcset ──> shard ──> segment ─
 
 SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs.db`），首次自动建表。支持 PostgreSQL 扩展。
 
+目标架构（尚未实现）见 `docs/design/storage-architecture.md`：每个 dataset 一个 SQLite（file/segment/DATA shard），arcset 元数据在全局 PostgreSQL。
+
 大部分业务字段（create_time, format, shard_max_bytes 等）存在 JSON `metadata` 列中，表结构仅保留 id、name、关联 FK 等核心列。
 
 `dataset create` 用 `BatchAddFileRecords`（多值 INSERT，199 行/批），10 万文件 ~11s。`PACKFS_BATCH_INSERT` 可调批大小。
 
 ## 状态机
 
-```
-dataset:   active ──> archived        (dataset finalize 后)
-              └─────> absorbed        (make-ec 后，数据已写入 EC shard)
+目标模型（代码尚未实现）：
 
-arcset:    building ──> complete ──> ready ──> taped
-              (validate 全过)  (finalize)  (写入磁带)
+```
+dataset SQLite:  building ──所有 DATA shard 完成──> built ──首次 arcset 注册──> frozen
+arcset:          defined ──> building ──> completed
+                                ▲             │
+                                └── append ───┘
 ```
 
-- `active`：文件在 `current_path`，可直接访问
-- `archived`：数据已打包到 shard
-- `absorbed`：数据已通过 EC 编码写入 arcset，不再作为独立的 data shard 管理
-- `building`：dataset 已关联，shard 正在生成 / EC 可在此阶段执行
-- `complete`：所有 shard 校验通过，数量 ≥ `metadata["shard_count"]`
-- `ready`：已 finalize，DB 已复制，目录自包含
-- `taped`：已写入磁带
+- `building` / `built`：dataset SQLite 状态；build 完成 = 所有 DATA shard 生成并写入 checksum。
+- `frozen`：首次 `arcset append` 在 PG 注册后只读；冻结后只能新建 dataset。
+- 不记录 relation 的 registered/absorbed 状态；DATA shard 数量表示 build-data 是否完成。
+- `defined` / `building` / `completed`：arcset 状态；`build_phase` / `health` / `parity_degraded` 见 `docs/design/arcset-lifecycle.md`。
+- 介质写入状态属于下游存储系统，packfs 不记录。
 
 ## EC 纠删码
 
-`shard make-ec` 将 arcset 中的 data shard 按 RS(k+m) 编码。参数约束：k+m ≤ 255，k ≤ 24，m ∈ {2,4,6}。
+`shard make-ec` 将 arcset 中的 DATA shard 按 RS(k+m) 编码。参数约束：k 1..24；m 为 0 或 `{2,4,6}`；`k+m ≤ 24`。`m=0` 表示不启用 EC。
+
+100GB 级 shard 必须使用 `docs/design/ec-streaming.md` 的分块流式编码/恢复/校验；当前 `internal/ec` 的 `os.ReadFile` 实现只适用于小文件。
 
 ```sh
-# 创建 arcset 时指定 EC 参数
+# 创建 arcset 时指定 EC 参数（--ec=8 表示无 EC）
 packfs arcset create --name=my-arc --target-root=/data/arc --ec=8+4
 
-# 关联 dataset 后执行 EC 编码
-packfs arcset append --id=1 --dataset-id=1
+# 注册 dataset（dataset SQLite）后执行 EC 编码
+packfs arcset append --id=1 --dataset-db=/data/datasets/<uid>.db
 packfs shard make-ec --arcset-id=1
 
 # 恢复丢失的 shard
-packfs shard recover --arcset-id=1 --shard-file=1D1_0000.tar
-
-# 修改 EC 参数后重新编码
-packfs arcset rebuild --id=1 --ec=12+4
+packfs shard recover --arcset-id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 ```
 
-EC 编码后的文件命名：`<stripe>D<position>_<原名>`（数据）/ `<stripe>E<position>.<ext>`（校验）。
+EC 后的文件命名：`<partition>/<seq>D-<dataset_key>-<原名>`（数据）/ `<partition>/<seq>E.<ext>`（校验）/ `<partition>/<seq>P.<ext>`（PAD）。
 
-## Dataset Finalize
+## dataset build 完成
 
-```sh
-packfs dataset finalize --id=1
-```
+1. 校验所有 DATA shard checksum。
+2. 确认 shard 数量 ≥ `shard_count`。
+3. `t_dataset.status=built`；dataset SQLite 保持可写，首次 arcset 注册后冻结。
 
-1. 校验所有 shard checksum
-2. 确认 shard 数量 ≥ `shard_count`
-3. 复制 `SQLITE_DB` → `current_path/packfs.db`
-4. dataset → `archived`
+目标架构取消 `dataset finalize` 及全局 `packfs.db` 复制。
 
 ## Shard 分组逻辑
 
@@ -119,32 +117,34 @@ packfs dataset finalize --id=1
 3. 单个文件超过 `shard_max_bytes` 时拆分多段，不超时文件保持完整。
 4. shard 序号从 0 开始，4 位整数命名（如 `0000.tar`）。格式由 dataset metadata 控制。
 
-EC 后的 shard 文件命名：
-- Data: `<stripe>D<position>_<原名>`（如 `1D1_0000.tar`）
-- EC:   `<stripe>E<position>.<ext>`（如 `1E3.tar`）
-- PAD:  `<stripe>D<position>_pad.<ext>`（如 `1D3_pad.tar`）
+EC 后的 shard 文件命名（目标）：
+- Data: `<partition>/<seq>D-<dataset_key>-<原名>`（如 `00/000D-ds3f2a1c9b-0000.tar`）
+- EC:   `<partition>/<seq>E.<ext>`（如 `08/000E.tar`）
+- PAD:  `<partition>/<seq>P.<ext>`（如 `05/000P.tar`）
 
 ## FUSE 挂载
 
 ```sh
-packfs fs mount --dataset-id=1 --mount-point=/mnt/pk  # 只读挂载
-fusermount -u /mnt/pk                                   # 卸载
+packfs fs mount --dataset-db=/data/datasets/<uid>.db --mount-point=/mnt/pk  # 仅未吸收 dataset
+packfs fs mount --arcset-id=1 --mount-point=/mnt/pk                          # arcset 挂载
+fusermount -u /mnt/pk
 ```
 
-- 基于 `hanwen/go-fuse/v2`，只支持 bin 格式
-- 从 DB 构建 file_path → segment 偏移的内存索引
+- 基于 `hanwen/go-fuse/v2`，只读；bin 随机读最优
+- dataset 挂载直接读 dataset SQLite；吸收后必须用 arcset 挂载
+- arcset 挂载读 PG + 各 dataset SQLite；根目录为 `<dataset_key>/`
 - 无压缩直接 seek+read；segment 级压缩按需解压；shard 级压缩全量解压（慢）
-- 目录树从 file_path 自动推导（`fs-test/1_2_ch10.dat` → `/fs-test/1_2_ch10.dat`）
+- 物理 shard 缺失时读取返回 `ENOENT`
 
 ## Shard 定义文件（.def）
 
 ```
-# dataset_id: 3
+# dataset_db: /data/datasets/<uid>.db
 相对路径/a.txt
 相对路径/b.txt
 ```
 
-- `# dataset_id` 由 gen-def / 外部脚本写入，`shard make` 据此从 DB 读取配置。
-- `# arcset_id` 可选，arcset 模式下 `shard make` 从 arcset metadata 读取 format/compress。
+- `# dataset_db` 由 gen-def / 外部脚本写入，`shard make` 据此打开 dataset SQLite。
+- `# arcset_id` 可选，arcset 模式下 `shard make` 从 PG / arcset metadata 读取 format/compress。
 - `shard make` 支持 `--output-dir` 覆盖输出目录。
 - 压缩模式和打包格式从 dataset（或 arcset）metadata 读取，def 文件名中的扩展名仅用于标识。

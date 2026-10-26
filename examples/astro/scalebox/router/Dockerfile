@@ -1,4 +1,4 @@
-FROM golang:1.25.2
+FROM golang:1.27.2
 
 LABEL maintainer="ddy2006"
 

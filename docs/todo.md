@@ -1,5 +1,7 @@
 # TODO
 
+> 2026-10-23：缺口与概要设计（讨论中）见 [design/README.md](design/README.md)。
+
 ## 实施计划进度
 
 | Phase | 内容 | 状态 |

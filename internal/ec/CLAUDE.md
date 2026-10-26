@@ -1,5 +1,7 @@
 # EC 包设计文档
 
+> 目标变更：100GB 级 shard 必须使用分块流式编解码，见 `docs/design/ec-streaming.md`。当前 `EncodeStripe` / `ReconstructStripe` / `VerifyStripe` 使用 `os.ReadFile` 全量读入，仅适用于小文件/测试。
+
 ## 概述
 
 EC（Erasure Code）包提供 Reed-Solomon 纠删码的编码、解码和验证功能。
