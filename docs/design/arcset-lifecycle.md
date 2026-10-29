@@ -122,7 +122,7 @@ seq=6  D D D D E E
 ### 3.1 dataset 生命周期与冻结
 
 - 每个 dataset 一个 SQLite 文件 `<dataset_uid>.db`，保存 `t_dataset` / `t_file` / `t_segment` / `t_shard`（仅 DATA）。
-- `t_dataset.status`：`building` → `built`；build 完成 = 所有 DATA shard 已生成并写入 checksum；`--gen-only` 由 `shard make` 完成全部 shard 后置 `built`。
+- `t_dataset.status`：`building` → `built`；build 完成 = 所有 DATA shard 已生成并写入 checksum；`--gen-only` 由全部 `shard make` 完成后执行 `dataset mark-built` 置 `built`。
 - `arcset append` 在 PG 注册 dataset 并分配 `dataset_key` / `append_order` 后，冻结 dataset SQLite；冻结后只能新建 dataset。
 - 不记录 relation 的 registered/absorbed 状态；build-data 是否完成由 DATA shard 数量判断。
 - 一个 dataset SQLite 只加入一个 arcset；需要第二份归档时重新创建 dataset。
@@ -142,6 +142,15 @@ shard_sort_index: 1,2
 - 未设置时，按 `t_shard.seq` / .def 顺序。
 - 正则不匹配、捕获组不存在、`shard_sort_index` 为空 → append 时报错。
 - 不保留 `group_regex` / `group_index` 别名，统一使用 `shard_sort_*`，避免与“分区组”混淆。
+
+### 4.1 排序的作用边界
+
+- 排序只决定 dataset 内 DATA shard 的逻辑顺序，不在 dataset SQLite 中产生 `partition` / `stripe_seq` / `pos` 等物理位置字段。
+- `arcset build-data` 将 relation `append_order` 与每个 dataset 的排序结果合成全局逻辑序列，再映射为目标 arcset 的 `group_no` / `stripe_seq` / `pos` / `partition`。
+- dataset 的 `t_shard.seq` 是本地序号，不直接等于 arcset 的条带 `seq`；映射后以 PG `t_shard` 的布局字段为准。
+- 排序不改变 shard 内容、checksum 或原文件名；arcset 阶段只增加 partition 目录和文件名前缀。
+- 不保证同一 dataset 的 shard 在物理上连续；PAD 复用会使后 append 的 dataset 填入较早的 stripe。
+- 首版不支持将已有 dataset 从一个 arcset 迁移到另一个 arcset；需要第二份归档时重新创建 dataset。
 
 ## 5. 排序、填充与扩容
 

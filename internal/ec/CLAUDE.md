@@ -1,13 +1,15 @@
 # EC 包设计文档
 
-> 目标变更：100GB 级 shard 必须使用分块流式编解码，见 `docs/design/ec-streaming.md`。当前 `EncodeStripe` / `ReconstructStripe` / `VerifyStripe` 使用 `os.ReadFile` 全量读入，仅适用于小文件/测试。
+> 实现状态：`stream.go` 已提供分块流式 `EncodeStripeStreaming` / `ReconstructStripeStreaming` / `VerifyStripeStreaming`，默认 chunk 8MiB；`internal/makeec`、`internal/recoverec`、`internal/validate` 已使用。旧 `EncodeStripe` / `ReconstructStripe` / `VerifyStripe` 仅保留测试兼容。
+>
+> 下文关于 1-based stripe/position、`<stripe>D<position>_` 命名和旧 `PlanStripes` 的段落属于旧实现说明；新 arcset 布局以 `docs/design/arcset-lifecycle.md` 为准。
 
 ## 概述
 
 EC（Erasure Code）包提供 Reed-Solomon 纠删码的编码、解码和验证功能。
 
 - RS 算法库：`github.com/klauspost/reedsolomon`
-- 项目参数约束：k+m ≤ 255（RS 硬限制）、k ≤ 24（工程上限）、m ∈ {2,4,6}
+- 项目参数约束：k 1..24；m 为 0 或 {2,4,6}；k+m ≤ 24。`m=0` 表示不启用 EC。
 
 ## 领域模型
 

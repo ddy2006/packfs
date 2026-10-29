@@ -15,7 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func makeIso(ctx context.Context, db *sql.DB, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
+func makeIso(ctx context.Context, db *sql.DB, store ShardWriter, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
 	isSegmentCompress, isShardCompress, isXZ := parseCompressMode(cfg.Compress)
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
@@ -126,7 +126,6 @@ func makeIso(ctx context.Context, db *sql.DB, cfg MakeConfig, segs []SegmentDef,
 	shardChecksum := fmt.Sprintf("%x", shardHash.Sum(nil))
 	relPath := filepath.Base(outputPath)
 
-	store := NewSQLiteStore(db)
 	var shardID int
 	if err := writeShardRecord(ctx, store, &shardID, cfg, relPath, shardFileSize, shardChecksum); err != nil {
 		return nil, err

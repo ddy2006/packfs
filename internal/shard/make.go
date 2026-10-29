@@ -15,6 +15,7 @@ type MakeConfig struct {
 	SourceRoot string // root directory for source files
 	ArcsetID   int    // FK, 0 if not part of an arcset
 	DatasetID  int    // FK
+	Seq        int    // dataset-local shard seq; -1 = allocate next
 }
 
 // MakeResult holds the result of making a shard.
@@ -25,19 +26,30 @@ type MakeResult struct {
 	Segments int
 }
 
-// MakeShard creates a single shard file from segment definitions.
-// It writes the physical shard file to outputPath and records it in the database.
+// ShardWriter records a dataset-level shard and its segments.
+type ShardWriter interface {
+	CreateShard(ctx context.Context, s *Shard) error
+	ReplaceSegments(ctx context.Context, shardID int, segs []*Segment) error
+}
+
+// MakeShard creates a single shard file from segment definitions using the
+// legacy SQLite store.
 func MakeShard(ctx context.Context, db *sql.DB, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
+	return MakeShardWithWriter(ctx, db, NewSQLiteStore(db), cfg, segs, outputPath)
+}
+
+// MakeShardWithWriter creates a single shard file and records it through writer.
+func MakeShardWithWriter(ctx context.Context, db *sql.DB, writer ShardWriter, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
 	if cfg.Format == "" {
 		cfg.Format = "bin"
 	}
 	switch cfg.Format {
 	case "tar":
-		return makeTar(ctx, db, cfg, segs, outputPath)
+		return makeTar(ctx, db, writer, cfg, segs, outputPath)
 	case "iso":
-		return makeIso(ctx, db, cfg, segs, outputPath)
+		return makeIso(ctx, db, writer, cfg, segs, outputPath)
 	case "bin":
-		return makeBin(ctx, db, cfg, segs, outputPath)
+		return makeBin(ctx, db, writer, cfg, segs, outputPath)
 	default:
 		return nil, fmt.Errorf("unknown shard format: %s", cfg.Format)
 	}
@@ -66,8 +78,9 @@ func parseCompressMode(compress string) (isSegment, isShard, isXZ bool) {
 }
 
 // writeShardRecord upserts a shard row and fills shardID.
-func writeShardRecord(ctx context.Context, store Store, shardID *int, cfg MakeConfig, relPath string, fileSize int64, checksum string) error {
+func writeShardRecord(ctx context.Context, store ShardWriter, shardID *int, cfg MakeConfig, relPath string, fileSize int64, checksum string) error {
 	sh := &Shard{
+		Seq:      cfg.Seq,
 		FilePath: relPath,
 		FileSize: fileSize,
 		Type:     "DATA",

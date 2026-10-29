@@ -2,12 +2,15 @@ package arcset
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/dataset"
 	"github.com/ddy2006/packfs/internal/db"
+	"github.com/ddy2006/packfs/internal/shard"
 	"github.com/kaichao/gopkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -17,124 +20,152 @@ func appendCmd() *cobra.Command {
 		Use:   "append",
 		Short: "Append a dataset to an arcset",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, _ := cmd.Flags().GetInt("id")
+			id, _ := cmd.Flags().GetInt64("id")
 			if id <= 0 {
 				return errors.NewUsage("--id is required")
 			}
-			datasetID, _ := cmd.Flags().GetInt("dataset-id")
-			if datasetID <= 0 {
-				return errors.NewUsage("--dataset-id is required")
+			datasetDBPath, _ := cmd.Flags().GetString("dataset-db")
+			if datasetDBPath == "" {
+				return errors.NewUsage("--dataset-db is required")
 			}
+			datasetKey, _ := cmd.Flags().GetString("dataset-key")
 
-			sqlDB, err := db.OpenSQLite()
+			absPath, err := filepath.Abs(datasetDBPath)
 			if err != nil {
-				return errors.WrapE(err, "open database")
+				return errors.WrapE(err, "resolve dataset sqlite path")
 			}
-			defer sqlDB.Close()
-
-			arcStore := arcset.NewSQLiteStore(sqlDB)
-			dsStore := dataset.NewSQLiteStore(sqlDB)
-
-			a, err := arcStore.FindByID(context.Background(), id)
+			dsDB, err := db.OpenDatasetSQLite(absPath, true)
 			if err != nil {
-				return errors.WrapE(err, "find arcset")
+				return errors.WrapE(err, "open dataset sqlite", "path", absPath)
 			}
-			if a.Status != "building" {
-				return errors.E("arcset is not in building state", "status", a.Status)
-			}
-
-			ds, err := dsStore.FindByID(context.Background(), datasetID)
+			dsStore := dataset.NewDatasetStore(dsDB)
+			ds, err := findSingleDataset(context.Background(), dsStore)
 			if err != nil {
-				return errors.WrapE(err, "find dataset")
+				dsDB.Close()
+				return err
+			}
+			shardStore := shard.NewDatasetStore(dsDB)
+			shards, err := shardStore.FindByDataset(context.Background(), ds.ID)
+			dsDB.Close()
+			if err != nil {
+				return errors.WrapE(err, "list dataset shards")
+			}
+			if ds.Status != "built" {
+				return errors.E("dataset is not built", "status", ds.Status)
+			}
+			if len(shards) == 0 {
+				return errors.E("dataset has no DATA shards")
+			}
+			if expected := metaInt64(ds.Metadata, "shard_count"); expected > 0 && int64(len(shards)) < expected {
+				return errors.E("dataset shard_count is incomplete",
+					"expected", expected, "actual", len(shards))
+			}
+			if datasetKey == "" {
+				datasetKey = dataset.DiscoveredDatasetKey(ds.UID)
 			}
 
-			// Verify config compatibility
-			if err := checkCompatibility(sqlDB, a, ds); err != nil {
+			ctx := context.Background()
+			pool, err := db.OpenPostgres(ctx)
+			if err != nil {
+				return errors.WrapE(err, "open postgres")
+			}
+			defer pool.Close()
+			store := arcset.NewPGStore(pool)
+			a, err := store.FindByID(ctx, id)
+			if err != nil {
+				return errors.WrapE(err, "find arcset", "id", id)
+			}
+			if err := inheritArcsetConfig(ctx, store, a, ds); err != nil {
 				return err
 			}
 
-			// Inherit shard_max_bytes from first dataset if not set
-			if err := inheritShardMaxBytes(arcStore, a, ds); err != nil {
-				return err
+			rel, err := store.AppendDataset(ctx, arcset.AppendDatasetParams{
+				ArcsetID:        id,
+				UID:             ds.UID,
+				Name:            ds.Name,
+				SQLitePath:      absPath,
+				DatasetKey:      datasetKey,
+				DatasetMetadata: ds.Metadata,
+			})
+			if err != nil {
+				return errors.WrapE(err, "append dataset")
 			}
 
-			// Link dataset to arcset
-			if err := arcStore.AddDataset(context.Background(), a.ID, ds.ID); err != nil {
-				return errors.WrapE(err, "link dataset to arcset")
+			// Freeze after PG registration. If this fails, a retry will find
+			// the existing relation and repeat the freeze.
+			if err := os.Chmod(absPath, 0o444); err != nil {
+				return errors.WrapE(err, "freeze dataset sqlite", "path", absPath)
 			}
 
-			fmt.Printf("appended dataset %s (id=%d) to arcset %s (id=%d)\n", ds.Name, ds.ID, a.Name, a.ID)
-			return nil
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"arcset_id":    id,
+				"dataset_uid":  ds.UID,
+				"dataset_key":  rel.DatasetKey,
+				"append_order": rel.AppendOrder,
+			})
 		},
 	}
-	cmd.Flags().Int("id", 0, "arcset ID")
-	cmd.Flags().Int("dataset-id", 0, "dataset ID")
+	cmd.Flags().Int64("id", 0, "arcset ID")
+	cmd.Flags().String("dataset-db", "", "path to dataset SQLite")
+	cmd.Flags().String("dataset-key", "", "dataset key within the arcset")
 	return cmd
 }
 
-func checkCompatibility(sqlDB *sql.DB, a *arcset.Arcset, ds *dataset.Dataset) error {
-	// Check shard_max_bytes consistency
-	arcShardMax := getInt64Meta(a.Metadata, "shard_max_bytes")
-	dsShardMax := getInt64Meta(ds.Metadata, "shard_max_bytes")
-	if arcShardMax > 0 && dsShardMax > 0 && arcShardMax != dsShardMax {
-		return errors.E("shard_max_bytes mismatch",
-			"arcset", arcShardMax, "dataset", dsShardMax)
-	}
-
-	// Check format/compress against existing linked datasets
-	dsStore := dataset.NewSQLiteStore(sqlDB)
-	arcStore := arcset.NewSQLiteStore(sqlDB)
-	refs, err := arcStore.ListDatasetRefs(context.Background(), a.ID)
+func findSingleDataset(ctx context.Context, store *dataset.DatasetStore) (*dataset.Dataset, error) {
+	limit := 1
+	all, err := store.Find(ctx, dataset.Filter{Limit: &limit})
 	if err != nil {
-		return errors.WrapE(err, "list linked datasets")
+		return nil, errors.WrapE(err, "list dataset")
 	}
-	if len(refs) > 0 {
-		ref, err := dsStore.FindByID(context.Background(), refs[0].ID)
-		if err != nil {
-			return errors.WrapE(err, "find linked dataset")
-		}
-		if refFmt, _ := ref.Metadata["format"].(string); refFmt != "" {
-			if dsFmt, _ := ds.Metadata["format"].(string); dsFmt != "" && dsFmt != refFmt {
-				return errors.E("format mismatch", "arcset", refFmt, "dataset", dsFmt)
-			}
-		}
-		if refComp, _ := ref.Metadata["compress"].(string); refComp != "" {
-			if dsComp, _ := ds.Metadata["compress"].(string); dsComp != "" && dsComp != refComp {
-				return errors.E("compress mismatch", "arcset", refComp, "dataset", dsComp)
-			}
-		}
+	if len(all) == 0 {
+		return nil, errors.E("dataset sqlite contains no dataset")
 	}
-	return nil
+	return all[0], nil
 }
 
-func inheritShardMaxBytes(arcStore arcset.Store, a *arcset.Arcset, ds *dataset.Dataset) error {
+func inheritArcsetConfig(ctx context.Context, store *arcset.PGStore, a *arcset.Arcset, ds *dataset.Dataset) error {
 	if a.Metadata == nil {
-		a.Metadata = make(map[string]any)
+		a.Metadata = map[string]any{}
 	}
-	if _, ok := a.Metadata["shard_max_bytes"]; !ok {
-		if smb, ok := ds.Metadata["shard_max_bytes"]; ok {
-			a.Metadata["shard_max_bytes"] = smb
-			return arcStore.Update(context.Background(), a.Name, arcset.Update{Metadata: a.Metadata})
+	changed := false
+	for _, key := range []string{"format", "compress", "shard_max_bytes"} {
+		target, ok := a.Metadata[key]
+		if !ok {
+			if v, exists := ds.Metadata[key]; exists {
+				a.Metadata[key] = v
+				changed = true
+			}
+			continue
 		}
+		source, exists := ds.Metadata[key]
+		if !exists {
+			continue
+		}
+		if fmt.Sprint(target) != fmt.Sprint(source) {
+			return errors.E("dataset config mismatch", "key", key,
+				"arcset", target, "dataset", source)
+		}
+	}
+	if changed {
+		return store.UpdateMetadata(ctx, int64(a.ID), a.Metadata)
 	}
 	return nil
 }
 
-func getInt64Meta(m map[string]any, key string) int64 {
+func metaInt64(m map[string]any, key string) int64 {
 	if m == nil {
 		return 0
 	}
-	v, ok := m[key]
-	if !ok {
-		return 0
-	}
-	switch n := v.(type) {
+	switch v := m[key].(type) {
 	case float64:
-		return int64(n)
+		return int64(v)
 	case int64:
-		return n
+		return v
 	case int:
-		return int64(n)
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
 	}
 	return 0
 }

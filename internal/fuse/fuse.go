@@ -24,7 +24,10 @@ func Mount(db *sql.DB, datasetID int, datasetRoot, compress, mountPoint string) 
 	if len(idx.Files) == 0 {
 		return nil, errors.E("no files found for dataset", "dataset_id", datasetID)
 	}
+	return mountIndex(idx, mountPoint)
+}
 
+func mountIndex(idx *Index, mountPoint string) (*fuse.Server, error) {
 	tree := idx.DirTree()
 
 	root := &rootNode{idx: idx, tree: tree}
@@ -218,6 +221,9 @@ func (fh *fileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.Re
 
 		data, err := readSegment(seg, readStart, readLen, fh.idx.Compress)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, syscall.ENOENT
+			}
 			logrus.Errorf("read segment from %s: %v", seg.ShardPath, err)
 			return nil, syscall.EIO
 		}
@@ -237,6 +243,9 @@ func (fh *fileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.Re
 
 // readSegment reads a portion of a segment from its shard file.
 func readSegment(seg SegmentLoc, start, length int64, compress string) ([]byte, error) {
+	if seg.ShardPath == "" {
+		return nil, os.ErrNotExist
+	}
 	f, err := os.Open(seg.ShardPath)
 	if err != nil {
 		return nil, err

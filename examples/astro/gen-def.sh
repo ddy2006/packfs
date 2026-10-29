@@ -1,22 +1,24 @@
 #!/bin/bash
-# SKA gen-def 脚本：按 channel 分组，40 文件/shard（不访问数据库）
-# 调用: gen-def.sh [--dataset-id <dataset_id>] [--target-root <output_dir>]
+# SKA gen-def 脚本：按 channel 分组，40 文件/shard
+# 调用: gen-def.sh --dataset-db <sqlite_path> [--target-root <output_dir>]
 
 set -e
 
-DATASET_ID=1
+DATASET_DB=
 TARGET_ROOT=
 DATASET_SET= TARGET_SET=
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dataset-id) DATASET_ID="$2"; DATASET_SET=1; shift 2 ;;
+    --dataset-db) DATASET_DB="$2"; DATASET_SET=1; shift 2 ;;
+    --dataset-db=*) DATASET_DB="${1#*=}"; DATASET_SET=1; shift ;;
     --target-root) TARGET_ROOT="$2"; TARGET_SET=1; shift 2 ;;
+    --target-root=*) TARGET_ROOT="${1#*=}"; TARGET_SET=1; shift ;;
     *) shift ;;
   esac
 done
 
-[ -z "$DATASET_SET" ] && echo "WARN: --dataset-id not set, using default 1" >&2
+[ -z "$DATASET_SET" ] && { echo "ERROR: --dataset-db is required" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEF="$SCRIPT_DIR/dataset.def"
@@ -31,10 +33,10 @@ COMPRESS=$(awk '/^  compress:/{print $2}' "$DEF")
 [ -z "$TARGET_SET" ] && echo "WARN: --target-root not set, using default $TARGET_ROOT" >&2
 
 # 用 Python 生成 .def 文件
-python3 - "$DEF" "$TARGET_ROOT" "$DATASET_ID" "$FORMAT" "$COMPRESS" << 'PYEOF'
+python3 - "$DEF" "$TARGET_ROOT" "$DATASET_DB" "$FORMAT" "$COMPRESS" << 'PYEOF'
 import sys, os, re
 
-def_file, target_root, dataset_id = sys.argv[1], sys.argv[2], sys.argv[3]
+def_file, target_root, dataset_db = sys.argv[1], sys.argv[2], sys.argv[3]
 fmt = sys.argv[4] if len(sys.argv) > 4 else 'bin'
 compress = sys.argv[5] if len(sys.argv) > 5 else ''
 
@@ -91,7 +93,7 @@ for ch in range(ch_start, ch_end + 1):
             count += 1
             fname = f"{target_root}/{batch_start}_{batch_end}_ch{ch}.{ext}.def"
             with open(fname, 'w') as out:
-                out.write(f"# dataset_id: {dataset_id}\n")
+                out.write(f"# dataset_db: {os.path.abspath(dataset_db)}\n")
                 for p in batch:
                     out.write(p + '\n')
 

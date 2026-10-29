@@ -1,6 +1,13 @@
 # EC 流式编解码
 
-> 解决 100GB 级 shard 的 EC 编码/恢复/校验内存问题。当前 `internal/ec` 的 `EncodeStripe` / `ReconstructStripe` / `VerifyStripe` 使用 `os.ReadFile` 全量读入，k=8、单 shard 100GB 时不可用。
+> 解决 100GB 级 shard 的 EC 编码/恢复/校验内存问题。`internal/ec/stream.go` 已实现分块流式 API，并由 `internal/makeec`、`internal/recoverec`、`internal/validate` 使用；旧 `EncodeStripe` / `ReconstructStripe` / `VerifyStripe` 仅保留兼容测试。
+
+## 实现状态（2026-10-29）
+
+- 已实现 `EncodeStripeStreaming`、`ReconstructStripeStreaming`、`VerifyStripeStreaming`，默认 chunk 8MiB。
+- `arcset make-ec` 已支持 `--ec-chunk-size`、`--group`、`--seq`；`arcset recover` 走流式恢复。
+- `--ec-parallel` 尚未实现，当前按 stripe 串行。
+- 旧非流式 API 保留，不再作为新调用路径。
 
 ## 1. 目标与约束
 
@@ -80,13 +87,12 @@
 
 ## 8. 代码改造范围
 
-- `internal/ec/encode.go`：新增流式 `EncodeStripeStreaming`；旧 `EncodeStripe` 仅保留给小文件/测试或删除；重写同文件的 `PlanStripes` 为 0-based/partition 命名。
-- `internal/ec/decode.go`：新增流式 `ReconstructStripeStreaming` / `VerifyStripeStreaming`。
-- 调用方：`internal/shard/make_ec.go`、`arcset recover`、`arcset validate` 改为流式 API。
+- `internal/ec/stream.go`：新增流式 API；旧 `internal/ec/encode.go` / `decode.go` 保留兼容测试。
+- 调用方：`internal/makeec`、`internal/recoverec`、`internal/validate` 已改用流式 API；旧 `internal/shard/make_ec.go` 待清理。
 - 测试：用 2–4GiB 稀疏/生成文件做内存上限测试；用小文件做正确性测试；100GB 场景用 mock/chunk 计数验证不整文件读取。
 
 ## 9. 待确认
 
-1. 默认 chunk 8MiB 还是 16MiB；是否按 `k+m` 自动调整。
-2. 是否提供 `--ec-parallel`；并行 stripe 的磁盘带宽上限。
-3. 是否保留旧的非流式 API 作为测试辅助。
+1. 默认 chunk 固定 8MiB；是否按 `k+m` 自动调整（当前未做）。
+2. `--ec-parallel` 尚未实现；并行 stripe 的磁盘带宽上限待定。
+3. 旧非流式 API 仅保留测试兼容，后续可删除。

@@ -3,6 +3,7 @@ package dataset
 // Dataset represents a row in the t_dataset table.
 type Dataset struct {
 	ID          int
+	UID         string
 	Name        string
 	Label       string
 	Status      string

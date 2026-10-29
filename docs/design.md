@@ -64,7 +64,7 @@ dataset metadata：
 | shard_max_bytes | shard 最大字节数，0=不限制 |
 | shard_root | DATA shard 输出目录；未设置时用 current_path |
 | shard_count | shard 数量 |
-| shard_sort_regex / shard_sort_index | shard 排序键 |
+| shard_sort_regex / shard_sort_index | dataset 内 shard 排序键；只影响逻辑顺序，arcset 位置由 build-data 计算 |
 
 ### PostgreSQL
 
@@ -193,14 +193,14 @@ arcset:          defined ──> building ──> completed
 ```
 1. arcset create --ec=8+4          # 不启用 EC：--ec=8
 2. arcset append（注册 dataset SQLite、冻结；校验 format/compress/shard_max_bytes 三项一致）
-3. shard make-ec --arcset-id=1
-   ├─ m>0：PlanStripes → 分块 EncodeStripeStreaming → 更新 PG t_shard
+3. arcset make-ec --id=1
+   ├─ m>0：按 stripe 分块 EncodeStripeStreaming → 更新 PG t_shard
    └─ m=0：校验数据 shard → completed
 ```
 
 **恢复**：
 ```sh
-shard recover --arcset-id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
+arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 ```
 定位 stripe/position → 收集存活 shard → 分块 ReconstructStripe → 流式 VerifyStripe。重建后的 SHA-256 必须与原记录一致，不更新 checksum；`m=0` 时任意数据 shard 丢失都无法恢复。
 
@@ -210,7 +210,7 @@ shard recover --arcset-id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 
 1. 校验所有 DATA shard checksum。
 2. 确认 `COUNT(t_shard) >= metadata["shard_count"]`。
-3. `t_dataset.status=built`；`--gen-only` 由 `shard make` 完成全部 shard 后置 `built`。
+3. `t_dataset.status=built`；`--gen-only` 由全部 `shard make` 完成后执行 `dataset mark-built` 置 `built`。
 4. dataset SQLite 保持可写；首次 arcset 注册后冻结。
 
 原 `dataset finalize` 取消：不再复制全局 `packfs.db`，dataset SQLite 本身即自包含元数据。

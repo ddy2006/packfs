@@ -1,8 +1,10 @@
 # API / WebUI 缺口
 
-## 现状
+## 现状（2026-10-29）
 
-- 17 个路由（`internal/api/handler.go:37-65`），其中 `POST /api/shards/validate/{id}` 返回 501（`handler.go:638`）。
+- CLI 核心链路已切到新两层存储；`internal/api` 仍是旧单 SQLite 实现，`packfs serve` 尚未迁移。
+- 旧 17 个路由（`internal/api/handler.go`）假设 `s.DB`；新 API 需要改为 PG + dataset SQLite 组合。
+- `POST /api/shards/validate/{id}` 仍返回 501。
 - WebUI “解包”按钮只提示用 CLI（`webui/js/app.js:444`）。
 - 缺少 arcset 的 append/build/validate/make-ec/recover/export、dataset/shard unpack、fs 管理、shard 按 ID 查询。
 - 数据库将拆为 dataset SQLite + 全局 PG；现有 API 假设单一 SQLite。

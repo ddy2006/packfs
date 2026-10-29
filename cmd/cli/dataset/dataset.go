@@ -13,6 +13,7 @@ func Command() *cobra.Command {
 	}
 
 	cmd.AddCommand(createCmd())
+	cmd.AddCommand(markBuiltCmd())
 	cmd.AddCommand(listCmd())
 	cmd.AddCommand(unpackCmd())
 	cmd.AddCommand(validateCmd())

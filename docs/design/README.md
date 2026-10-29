@@ -16,14 +16,32 @@
 |------|------|--------|------|
 | [storage-architecture.md](storage-architecture.md) | 两层数据库：dataset SQLite + 全局 PostgreSQL | P0 | 已确认 |
 | [ec-streaming.md](ec-streaming.md) | 100GB shard 的流式 EC 编解码/恢复/校验 | P0 | 已确认 |
-| [glossary.md](glossary.md) | 分区/分区组/条带等术语统一 | P0 | 讨论中 |
-| [arcset-lifecycle.md](arcset-lifecycle.md) | arcset 定义、容量模型、构建/校验/恢复状态机、命名 | P0 | 讨论中 |
-| [commands-db.md](commands-db.md) | 命令细化、DB 字段与索引、实施顺序 | P0 | 讨论中 |
+| [glossary.md](glossary.md) | 分区/分区组/条带等术语统一 | P0 | 已确认 |
+| [arcset-lifecycle.md](arcset-lifecycle.md) | arcset 定义、容量模型、构建/校验/恢复状态机、命名 | P0 | 已实现（核心） |
+| [commands-db.md](commands-db.md) | 命令细化、DB 字段与索引、实施顺序 | P0 | 部分实现 |
 | [downstream-handoff.md](downstream-handoff.md) | 命名契约、manifest、分区映射 | P0 | 讨论中 |
-| [fuse.md](fuse.md) | mount/unmount/fsck、arcset 挂载、T_fs_mount | P0 | 讨论中 |
-| [api-webui.md](api-webui.md) | API 桩、缺失操作、WebUI 页签 | P0 | 讨论中 |
+| [fuse.md](fuse.md) | mount/unmount/fsck、arcset 挂载、T_fs_mount | P0 | 部分实现 |
+| [api-webui.md](api-webui.md) | API 桩、缺失操作、WebUI 页签 | P0 | 未迁移 |
 | [packaging.md](packaging.md) | 压缩校验、输出目录、gen-def、并行、ISO、scalebox | P1 | 讨论中 |
-| [platform.md](platform.md) | PostgreSQL、测试、文档同步、补全 | P1 | 讨论中 |
+| [platform.md](platform.md) | PostgreSQL、测试、文档同步、补全 | P1 | 部分实现 |
+
+## 实现状态（2026-10-29）
+
+已实现并通过 `examples/astro` 验收：
+
+- dataset：独立 SQLite、`dataset create`、`--gen-only`、`dataset mark-built`、`dataset unpack`
+- shard：`shard make` 读取 `# dataset_db`，写 dataset SQLite 的 shard/segment
+- arcset：PG `create` / `append` / `build-data` / `make-ec` / `validate` / `recover` / `export` / `list`
+- EC：分块流式编码、恢复、校验；默认 chunk 8MiB
+- FUSE：dataset/arcset 索引、PG `t_fs_mount`、`fs list`、`fs umount` 已落地；实际 mount 尚未做运行验证
+- examples：`pack-serial.sh` 与 `full-pipeline.sh --with-ec` 已改为新 CLI；全流程通过
+
+尚未完成：
+
+- `internal/api` / WebUI 仍是旧单 SQLite 实现，`packfs serve` 未迁移。
+- `arcset show`、`arcset expand` 未实现；`dataset list` 仍走旧全局库。
+- `--ec-parallel` 参数未实现；`shard make-ec` / `shard recover` 仍为旧路径。
+- 旧命令 `dataset validate` / `dataset finalize` / `arcset rebuild` 尚未从命令树移除。
 
 ## 本轮确认的设计方向
 
@@ -34,7 +52,7 @@
 5. PAD shard 要写下游介质（仅 `m>0`）；packfs 侧生成 0 字节空文件。
 6. 命名分两阶段：dataset 阶段文件名不受限制；arcset 阶段用 partition 目录（默认 2 位、最大 3 位）+ seq 前缀：`<partition>/<seq>D-<dataset_key>-<原名>`、`<partition>/<seq>E.<ext>`、`<partition>/<seq>P.<ext>`；每个 partition 目录内 seq 唯一递增。
 7. `dataset_key` 缺省为 `ds<dataset_uid 前 8 位>`（如 `ds3f2a1c9b`），可通过 `--dataset-key` 显式指定；冲突直接报错。
-8. dataset 增加 `shard_sort_regex` / `shard_sort_index` 属性，从 shard 文件名提取排序键；无别名，无配置时按 `seq`。
+8. dataset 增加 `shard_sort_regex` / `shard_sort_index` 属性，从 shard 文件名提取排序键；无别名，无配置时按 `seq`。排序只决定 dataset 内逻辑顺序，arcset 的 partition/stripe/pos 在 build-data 时重新计算；首版不支持跨 arcset 迁移。
 9. 条带 `seq` / `pos` 统一 0-based。
 10. 每个 partition 计算 `available_capacity`（剩余容量），按 shard 实际压缩后大小更新。
 11. 新增 dataset 时优先复用 PAD 位置，并对受影响的整个 stripe 重新计算 EC。
@@ -56,7 +74,7 @@
 27. FUSE 支持 dataset / arcset 只读挂载；dataset 仅未吸收且 shard 就位；arcset 根目录为 `<dataset_key>/`；arcset 挂载要求 PG 与 dataset SQLite 可访问，DB 有记录即可列目录，读取时 shard 缺失返回 `ENOENT`。
 28. 存储分两层：每个 dataset 一个 SQLite 文件（file/segment/DATA shard），arcset 元数据放全局 PostgreSQL；无跨库外键，只用 `dataset_uid` + `seq` 逻辑引用。
 29. `dataset_uid` 本地生成 UUID；SQLite 文件名 `<uid>.db`；PG 的 `t_dataset_ref` 记录 `uid` / `sqlite_path`；`dataset_key` 缺省取 UID 去连字符后的前 8 位。
-30. build 完成 = 所有 DATA shard 构建完成，`t_dataset.status=built`；`--gen-only` 由 `shard make` 完成全部 shard 后置 `built`；首次 arcset 注册成功后冻结 SQLite。
+30. build 完成 = 所有 DATA shard 构建完成，`t_dataset.status=built`；`--gen-only` 由外部 `shard make` 全部完成后执行 `dataset mark-built` 置 `built`；首次 arcset 注册成功后冻结 SQLite。
 31. PG 的 `t_shard` 保存 DATA/EC/PAD；DATA 的 `file_size` / `sha256` 是从 dataset SQLite 复制的快照；行存在即已写入。
 32. 不记录 relation 的 registered/absorbed 状态；DATA shard 数量表示 build-data 是否完成。
 33. recover 重建的 DATA shard checksum 必须与记录一致；只更新 PG 的 `last_check` 和 arcset `health`。

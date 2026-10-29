@@ -11,11 +11,11 @@
 ## 全流程打包
 
 ```
-dataset create → arcset create → arcset gen-def → scalebox app
+dataset create → gen-def → scalebox app
   ├── pull-untar: 数据拷贝到处理节点，按需解包
   ├── shard-make:  shard 打包、校验、验证
   └── router:     路由模块，分发任务
-→ arcset finalize
+→ dataset mark-built → arcset append / build-data / make-ec
 ```
 
 ## dataset.def 配置
@@ -123,7 +123,7 @@ cd packfs/examples/astro/scalebox
 ## 前置依赖
 
 - `packfs` 二进制在 PATH 中
-- `SQLITE_DB` 环境变量指向数据库文件
+- `.def` 文件包含 `# dataset_db`；arcset 阶段使用 `PACKFS_PG_URL`
 - `dataset.def` YAML 配置文件（位于 scalebox 目录或通过 `DEF_FILE` 指定）
 - scalebox 集群已配置（`scalebox.env` 中 `CLUSTER` 指向目标集群）
 - router Docker 镜像已构建（`cd router && make`）

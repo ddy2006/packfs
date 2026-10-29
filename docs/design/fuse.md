@@ -2,10 +2,11 @@
 
 ## 现状
 
-- 当前 `fs mount --dataset-id` 只支持单一 dataset（旧架构）；`internal/fuse/index.go` 用单一 datasetRoot 拼 shard 路径。
-- dataset SQLite 独立后，dataset 内没有 arcset 字段，吸收后无法按 dataset 定位 shard。
-- `fs umount`、`fs fsck` 是未实现桩。
-- `T_fs_mount` 统一放全局 PostgreSQL；dataset SQLite 只读。
+- 已实现 `fs mount --dataset-db` / `--arcset-id`、`fs list`、`fs umount`；挂载记录写 PG `t_fs_mount`。
+- dataset 索引读独立 SQLite；arcset 索引按 PG DATA shard 的 `file_path` 跨库拼路径，根目录为 `<dataset_key>/`。
+- 物理 shard 缺失时读取返回 `ENOENT`。
+- `fs fsck` 仍是未实现桩；FUSE 实际 mount 尚未做运行验证。
+- 旧 `fs mount --dataset-id` 和本地状态库路径已废弃。
 - 支持矩阵：bin 无压缩 / `segment:zstd` / `segment:xz` 可随机读；shard 级 `zstd`/`xz` 需全量解压；`zstd_seekable` 未实现。
 
 ## 目标

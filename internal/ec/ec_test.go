@@ -21,6 +21,7 @@ func TestParseConfig_Success(t *testing.T) {
 		{"4+2", 4, 2},
 		{"12+6", 12, 6},
 		{" 8 + 4 ", 8, 4},
+		{"8", 8, 0},
 	}
 	for _, tt := range tests {
 		c, err := ParseConfig(tt.input)
@@ -35,7 +36,7 @@ func TestParseConfig_Success(t *testing.T) {
 }
 
 func TestParseConfig_Invalid(t *testing.T) {
-	for _, s := range []string{"", "8", "8-4", "abc+4", "8+xyz"} {
+	for _, s := range []string{"", "8-4", "abc+4", "8+xyz"} {
 		if _, err := ParseConfig(s); err == nil {
 			t.Errorf("ParseConfig(%q) expected error, got nil", s)
 		}
@@ -47,7 +48,7 @@ func TestParseConfig_Invalid(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestConfig_Validate_OK(t *testing.T) {
-	for _, c := range []Config{{8, 4}, {4, 2}, {12, 6}, {24, 2}, {1, 2}} {
+	for _, c := range []Config{{8, 4}, {4, 2}, {12, 6}, {22, 2}, {1, 2}, {8, 0}} {
 		if err := c.Validate(); err != nil {
 			t.Errorf("Config%+v.Validate() = %v, want nil", c, err)
 		}
@@ -56,7 +57,7 @@ func TestConfig_Validate_OK(t *testing.T) {
 
 func TestConfig_Validate_Fail(t *testing.T) {
 	fail := []Config{
-		{0, 4}, {8, 0}, {-1, 4}, {25, 4}, {8, 3}, {8, 8}, {200, 60},
+		{0, 4}, {-1, 4}, {25, 4}, {8, 3}, {8, 8}, {200, 60}, {23, 2},
 	}
 	for _, c := range fail {
 		if err := c.Validate(); err == nil {

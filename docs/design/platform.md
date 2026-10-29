@@ -2,20 +2,15 @@
 
 ## 1. PostgreSQL
 
-现状：`build/postgres/` 有 schema，但代码只有 SQLite Store；`go.mod` 无 PG 驱动，三个 Store 接口没有 PG 实现。
+现状（2026-10-29）：核心链路已切到两层存储。`pgx`、`PGStore`、per-dataset SQLite Store、流式 EC、FUSE 索引和 examples 已落地；API/WebUI 仍是旧单 SQLite 路径。
 
-目标架构：dataset 层每个 dataset 一个 SQLite；arcset 层使用全局 PostgreSQL。因此 PG 不是可选扩展，而是 arcset 的必需依赖。
+仍需补：
 
-需要补：
-
-- PG 驱动（建议 `pgx`）与 `internal/db.OpenPostgres`。
-- PG schema：`build/postgres/arcset_schema.sql`，见 [storage-architecture.md](storage-architecture.md)。
-- dataset SQLite schema：`build/sqlite/dataset_schema.sql`。
-- `PGStore`：arcset、relation、shard、mount 的读写；SQL 方言差异（JSONB、partial index、占位符）。
-- dataset SQLite Store：按文件打开，只读模式 `mode=ro` / `immutable=1`。
-- `t_fs_mount` 在 PG；不使用本地状态库。
-- PG schema 版本化迁移；`build/postgres/arcset_schema.sql` 为初始化脚本，迁移脚本与其保持一致。
-- 测试：dataset Store 用内存/临时 SQLite；arcset Store 用 PG 容器（testcontainers 或 docker compose）。
+- PG schema 版本化迁移；`build/postgres/arcset_schema.sql` 为初始化脚本，`internal/db/postgres_schema.sql` 为嵌入式测试副本，两者必须同步。
+- PG 集成测试、故障注入测试、build-data 中断重试测试。
+- API/WebUI 切到新 Store；旧命令 `dataset validate/finalize`、`arcset rebuild`、旧 `shard make-ec/recover` 清理。
+- `arcset show/expand` 与 `--ec-parallel`。
+- `t_fs_mount` 在 PG；`fs umount`/`fs list` 已实现，`fsck` 未实现。
 
 ## 2. 测试缺口
 
@@ -29,12 +24,16 @@
 
 ## 3. 文档同步
 
-已确认不一致：
+已同步：
 
-- 根 README：仍写 `arcset gen-def/validate/finalize`、`fs mount --arcset-id`、`make-ec --def-file`。
-- `cmd/cli/README.md`：同上，且命令参数与当前实现不符。
-- `docs/design.md`：arcset 状态机、PG、ISO fork 等表述需更新。
-- `CLAUDE.md`：REST 端点数量 14/15 与实际 17 不符；数据库章节仍写单一 SQLite。
+- 根 `README.md`、`examples/astro/README.md`、`CLAUDE.md`、`internal/CLAUDE.md`、`internal/ec/CLAUDE.md`、`cmd/cli/CLAUDE.md` 已按新 CLI/两层存储更新。
+- `docs/design.md` 的 EC 流程已改为 `arcset make-ec` / `arcset recover`。
+
+仍待同步：
+
+- `cmd/cli/README.md` 仍是旧命令参考。
+- `webui/README.md` 与 WebUI 文案仍按旧 API/介质状态描述。
+- `docs/todo.md` 的 Phase 进度尚未重排。
 
 做法：实现阶段统一修订；设计阶段先以 `docs/design/` 为准。
 

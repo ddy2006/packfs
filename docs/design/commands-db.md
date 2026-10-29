@@ -4,6 +4,12 @@
 > dataset 元数据在每 dataset 一个 SQLite；arcset 元数据在全局 PostgreSQL。不引入 pipeline/task 表。
 > 旧库不兼容；dataset SQLite schema 与 PG schema 分别重建。
 
+## 实现状态（2026-10-29）
+
+- 已实现：`arcset create/append/build-data/make-ec/validate/recover/export/list`、`dataset create/mark-built/unpack`、新的 `shard make`（`# dataset_db`）。
+- 待实现：`arcset show/expand`、`--ec-parallel`、API/WebUI；`shard make-ec/recover` 和 `dataset list` 仍是旧路径。
+- 当前 `arcset make-ec` 支持 `--ec-chunk-size`、`--group`、`--seq`；`arcset validate` 暂不支持 `--source-root`，`arcset recover` 暂不支持 `--group/--source-root`。
+
 ## 1. 命令总览
 
 | 命令 | 作用 |
@@ -11,16 +17,20 @@
 | `arcset create` | 定义 arcset：EC、group_count、layout、seq_width、partition_capacity |
 | `arcset append` | 注册 dataset SQLite，确定 dataset_key / append_order，冻结 SQLite |
 | `arcset build-data` | 排序 data shard、分配 partition/stripe、移动文件并写 DB |
-| `arcset make-ec` | 按 stripe 生成/重算 EC + PAD |
+| `arcset make-ec` | 按 stripe 生成/重算 EC + PAD；支持 `--group/--seq` |
 | `arcset validate` | 数据阶段 / EC 阶段 / 全量校验，更新 health |
-| `arcset expand` | 显式增加 group_count；无空间时由人工执行 |
+| `arcset expand` | 显式增加 group_count；无空间时由人工执行（待实现） |
 | `arcset recover` | 按 stripe 恢复 data / all |
 | `arcset export` | 显式导出 `arcset.json` |
-| `arcset list` / `show` | 查询 status/build_phase/health/parity_degraded、容量、shard 统计 |
+| `arcset list` | 查询 status/build_phase/health/parity_degraded、容量、shard 统计 |
+| `arcset show` | 单 arcset 详情（待实现） |
 | `dataset create` | 创建独立 dataset SQLite，构建 DATA shard，增加 shard 排序属性 |
-| `shard make-ec` | 低层单 stripe 操作，供外部调度器调用 |
+| `dataset mark-built` | 校验 DATA shard 并置 `built`；用于 `--gen-only` + 外部 `shard make` |
+| `shard make-ec` | 旧低层路径，待迁移 |
 
 `arcset rebuild` 暂不纳入首版：改 EC 参数需要全量重排，避免与 append/expand 冲突；后续单独设计。
+
+跨 arcset 迁移（dataset 从一个 arcset 移到另一个 arcset，含 EC 重建）暂不纳入首版；后续有需求再单独设计。
 
 ## 2. 命令细节
 
@@ -99,7 +109,7 @@ packfs arcset build-data --id=1 [--dataset-uid=<uuid>]
 - 要求 `status=building, build_phase=data`，`health=ok`；`shard_max_bytes > 0` 且 ≤ `partition_capacity`。
 - 对每个已注册 dataset relation：
   1. 读取 dataset SQLite 的 DATA shard 清单；不重新生成 shard。
-  2. 按 `shard_sort_regex` / `shard_sort_index` 排序；未配置按 `t_shard.seq` / 文件名。
+  2. 按 `shard_sort_regex` / `shard_sort_index` 排序；未配置按 `t_shard.seq` / 文件名。排序只决定 dataset 内逻辑顺序，`t_shard.seq` 不直接作为 arcset 条带序号。
   3. 逻辑顺序 = relation `append_order` → dataset 内排序；物理位置优先复用已有 PAD，再创建新 stripe。
   4. 依次填入 stripe：`pos=0..k-1`，`partition` 按 layout 计算。
   5. 每个 shard 按实际大小检查目标 partition 的 `used_capacity`；放不下直接报错，不自动扩容。
@@ -112,7 +122,7 @@ packfs arcset build-data --id=1 [--dataset-uid=<uuid>]
 ### 2.4 `arcset make-ec`
 
 ```sh
-packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB]
+packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB] [--group=0] [--seq=3]
 ```
 
 - 要求 `status=building`、`build_phase=data` 或 `ec`、`health=ok`，且所有已注册 dataset 的 DATA shard 已写入 PG。
@@ -126,7 +136,7 @@ packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB]
   4. 写/更新 PG `t_shard`（EC/PAD：`dataset_ref` 为空）。
   5. 使用 [ec-streaming.md](ec-streaming.md) 的流式 `VerifyStripe` 校验 stripe。
 - 全部 stripe 完成并全量校验通过后：`status=completed`、`build_phase=none`、`health=ok`、`parity_degraded=0`。
-- 低层 `shard make-ec --arcset-id=1 --group=0 --seq=3` 只处理一个 stripe，供外部调度器调用；`arcset make-ec` 处理全部 stripe。`m=0` 时低层命令直接报错。
+- `arcset make-ec --group/--seq` 只处理一个 stripe；不指定时处理全部 stripe。旧 `shard make-ec` 尚未迁移到新路径。`m=0` 时不做 EC。
 
 ### 2.5 `arcset validate`
 
@@ -197,10 +207,21 @@ packfs dataset create --root-dir=/data/src \
 
 - 本地生成 `dataset_uid`（UUID），创建独立 SQLite `<db-dir>/<uid>.db`；`--db-dir` 缺省 `$PACKFS_DATASET_DB_DIR`，未设置时 `~/data/packfs/datasets`。
 - `--target-root` 为 DATA shard 输出目录，写入 `metadata.shard_root`；未指定时沿用现有规则。
-- 扫描源目录 → `t_file` → DATA shard；全部完成后 `t_dataset.status=built`；`--gen-only` 时保持 `building`，外部 `shard make` 完成全部 shard 后自动置 `built`。
+- 扫描源目录 → `t_file` → DATA shard；全部完成后 `t_dataset.status=built`；`--gen-only` 时保持 `building`；外部 `shard make` 全部完成后执行 `dataset mark-built` 置 `built`。
 - `shard_sort_regex` / `shard_sort_index` 写入 `t_dataset.metadata`；未设置时按 `t_shard.seq` / 文件名。
 - 其他参数（format/compress/shard_max_bytes）保持不变。
 - 不访问 PG；输出 `{"dataset_uid":"...","sqlite_path":"...","shard_count":N}`。
+
+### 2.11 `dataset mark-built`
+
+```sh
+packfs dataset mark-built --dataset-db=/data/datasets/<uid>.db
+```
+
+- 读取独立 dataset SQLite，校验全部 DATA shard 的存在与 SHA-256。
+- 写入 `metadata.shard_count`，置 `t_dataset.status=built`；不复制 SQLite、不访问 PG。
+- 已 `built` 的 dataset 重复执行幂等。
+- 输出 `{"dataset_uid":"...","status":"built","shard_count":N}`。
 
 ## 3. DB 字段
 

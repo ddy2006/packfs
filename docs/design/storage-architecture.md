@@ -40,7 +40,7 @@ dataset SQLite:  building ──所有 DATA shard 完成──> built
                                                 frozen（只读）
 ```
 
-- build 完成 = 所有 DATA shard 已生成、checksum 已写入，`t_dataset.status='built'`；`--gen-only` 在 `shard make` 完成全部 shard 后置 `built`。
+- build 完成 = 所有 DATA shard 已生成、checksum 已写入，`t_dataset.status='built'`；`--gen-only` 在全部 `shard make` 完成后执行 `dataset mark-built` 置 `built`。
 - 首次 `arcset append` 在 PG 注册成功后，dataset SQLite 冻结；冻结后只能新建 dataset。
 - 不记录 relation 的 registered/absorbed 状态；`build-data` 是否完成由 PG 中该 dataset 的 DATA shard 数量判断。
 - recover 重建的是原始 DATA shard 的字节内容；只要源 file 不变，SHA-256 不变。recover 只更新 PG 的 `last_check` 和 arcset `health`。

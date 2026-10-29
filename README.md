@@ -3,48 +3,62 @@
 将小文件打包成大文件（shard），减少磁盘碎片，提高性能。
 
 ```
-dataset ──> arcset ──> shard ──> segment ──> file
+dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_ref──> arcset
+       └── DATA shard ──> segment ──> file
 ```
 
 ## 快速开始
 
 ```sh
-# 1) 创建 dataset
-packfs dataset create --root-dir=/data/source --name=my-ds
+# 1) 创建 dataset（独立 SQLite）
+packfs dataset create --root-dir=/data/source --db-dir=/data/datasets \
+  --target-root=/data/shards --gen-only
 
-# 2) 创建 arcset
-packfs arcset create --name=my-arc --target-root=/data/output --dataset-ids=1
+# 2) 生成 .def（外部脚本，头写 # dataset_db）
+bash gen-def.sh --dataset-db=/data/datasets/<uid>.db --target-root=/data/def
 
-# 3) 生成 shard 定义文件
-packfs arcset gen-def --id=1 --target-root=/data/output
+# 3) 打包 DATA shard
+packfs shard make --def-file=/data/def/0000.tar.def --output-dir=/data/shards
 
-# 4) 打包 shard
-packfs shard make --def-file=/data/output/0000.bin.def
+# 4) 标记 dataset built
+packfs dataset mark-built --dataset-db=/data/datasets/<uid>.db
 
-# 5) 校验
-packfs arcset validate --id=1
+# 5) 创建 arcset（PG）
+packfs arcset create --name=my-arc --target-root=/data/arc \
+  --ec=8+4 --partition-capacity=18TB
 
-# 6) 封存
-packfs arcset finalize --id=1
+# 6) 注册 dataset、布局、EC、校验、导出
+packfs arcset append --id=1 --dataset-db=/data/datasets/<uid>.db
+packfs arcset build-data --id=1
+packfs arcset make-ec --id=1
+packfs arcset validate --id=1 --stage=all
+packfs arcset export --id=1
 
-# 7) 解包
-packfs shard unpack --shard-file=/data/output/0000.bin --target-root=/extract
+# 7) 恢复
+packfs arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 ```
+
+环境变量：
+
+- `PACKFS_PG_URL`：arcset 全局 PostgreSQL DSN。
+- `PACKFS_DATASET_DB_DIR`：dataset SQLite 缺省目录。
+
+完整应用验收见 `examples/astro/`；`packfs serve` / WebUI 尚未迁移到新两层存储。
 
 ## 打包格式
 
-支持 **bin**（二进制拼接）和 **tar** 两种打包格式，以及 **zstd** / **xz** / **zstd_seekable** 压缩（shard 级或 segment 级）。
-
-![ER 图](packfs-erd.svg)
+支持 **bin**（二进制拼接）、**tar** 和 **iso**，以及 **zstd** / **xz** / **zstd_seekable** 压缩（shard 级或 segment 级）。
 
 ## 文档
 
 | 文档 | 内容 |
 |------|------|
-| `cmd/cli/README.md` | 完整命令参考 |
-| `docs/design.md` | 数据库设计、状态机、metadata 定义、分包逻辑 |
-| `docs/todo.md` | 计划中的功能 |
+| `docs/design/README.md` | 概要设计、实现状态、已确认方向 |
+| `docs/design/storage-architecture.md` | dataset SQLite + PostgreSQL |
+| `docs/design/commands-db.md` | 命令、DB 字段与实现顺序 |
+| `docs/design/ec-streaming.md` | 大 shard 流式 EC |
+| `examples/astro/README.md` | 应用级全流程验收 |
 
 ## 技术栈
 
-Go + SQLite + Cobra。详见 `CLAUDE.md`。
+Go + SQLite + PostgreSQL + Cobra + Reed-Solomon。详见 `CLAUDE.md`。

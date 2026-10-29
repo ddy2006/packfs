@@ -9,15 +9,20 @@ dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_
        └── DATA shard ──> segment ──> file
 ```
 
-| 包 | 对应表（目标） | 说明 |
+| 包 | 存储 | 说明 |
 |----|--------|------|
 | `dataset` | dataset SQLite：`t_dataset`、`t_file`、`t_shard`(DATA)、`t_segment` | 不可变文件集合，`CreateFromDir` 扫描目录创建 |
 | `arcset` | PG：`t_arcset`、`t_dataset_ref`、`r_arcset_dataset_ref`、`t_shard` | 多 dataset 的聚合容器，`GenerateSegments` 切分为 `SegmentDesc` |
 | `shard` | dataset SQLite + PG | dataset 层构建 DATA shard；arcset 层管理 DATA/EC/PAD 布局 |
+| `builddata` | dataset SQLite + PG | 排序 shard、placement、PAD 复用、移动文件 |
+| `makeec` | PG + 文件 | 按 stripe 生成 EC/PAD |
+| `recoverec` | PG + 文件 | 流式恢复 DATA/EC |
+| `validate` | PG + 文件 | data/ec/all 校验 |
+| `export` | PG | 生成 arcset.json |
 
 依赖方向：`shard` → `arcset`（使用 `SegmentDesc`），`arcset` 直连 `t_file` 查询。
 
-目标架构（尚未实现）：`dataset` 包只操作每个 dataset 的 SQLite；arcset 层（`t_dataset_ref`、`t_arcset`、`r_arcset_dataset_ref`、`t_shard`）走 PostgreSQL Store。无跨库外键，用 `dataset_uid` + `seq` 逻辑关联。
+当前实现：`dataset` 包有 `DatasetStore` 操作每个 dataset 的 SQLite；arcset 层（`t_dataset_ref`、`t_arcset`、`r_arcset_dataset_ref`、`t_shard`、`t_fs_mount`）走 `arcset.PGStore`。无跨库外键，用 `dataset_uid` + `seq` 逻辑关联。旧的 `SQLiteStore` / `OpenSQLite` 只保留给未迁移命令。
 
 ## 包约定
 
@@ -26,7 +31,7 @@ internal/<package>/
 ├── <package>.go      # 领域模型 struct
 ├── store.go          # Store 接口
 ├── store_sqlite.go   # SQLiteStore（*sql.DB 注入）
-├── store_pg.go       # 目标：PGStore（arcset 层，尚未实现）
+├── store_pg.go       # PGStore（arcset 层）
 ├── create.go         # 创建业务逻辑
 ├── list.go           # 列表查询
 ```
@@ -42,11 +47,11 @@ internal/<package>/
 - 日志：`github.com/sirupsen/logrus`
 - SQLite：`github.com/mattn/go-sqlite3`，占位符用 `?`
 - 压缩：`github.com/klauspost/compress/zstd`、`github.com/ulikunitz/xz`
-- schema 嵌入：`internal/db/schema.sql` 通过 `//go:embed` 嵌入
+- schema 嵌入：`internal/db/dataset_schema.sql`、`internal/db/postgres_schema.sql`
 
 ## 数据库
 
-- SQLite，路径由 `SQLITE_DB` 环境变量指定，缺省 `data/packfs.db`
-- 首次创建时自动用嵌入的 `schema.sql` 建表
-- 入口：`internal/db.OpenSQLite()`
-- 目标架构（尚未实现）：每个 dataset 一个 SQLite，arcset 元数据在 PostgreSQL；见 `docs/design/storage-architecture.md`
+- dataset：每个 dataset 一个 SQLite，入口 `internal/db.OpenDatasetSQLite(path, readOnly)`；新文件自动应用 `dataset_schema.sql`。
+- arcset：全局 PostgreSQL，入口 `internal/db.OpenPostgres(ctx)` / `PACKFS_PG_URL`；`arcset.PGStore`。
+- schema 源文件：`build/sqlite/dataset_schema.sql`、`build/postgres/arcset_schema.sql`；`internal/db/*_schema.sql` 为嵌入式副本，修改时必须同步。
+- 旧全局 `SQLITE_DB` / `OpenSQLite` 只供未迁移的旧命令使用，新代码不要依赖。

@@ -23,12 +23,12 @@
 | **dataset SQLite** | 每个 dataset 一个独立 SQLite 文件 `<dataset_uid>.db`，保存 dataset/file/segment/DATA shard；首次注册到 arcset 后冻结 | — |
 | **PostgreSQL 全局库** | arcset 层权威库：`t_dataset_ref`、`t_arcset`、`r_arcset_dataset_ref`、`t_shard`（DATA/EC/PAD）、`t_fs_mount` | — |
 | **dataset_uid** | dataset 的全局标识，本地生成 UUID；写入 dataset SQLite 和 PG 的 `t_dataset_ref` | — |
-| **dataset status** | dataset SQLite 生命周期：`building` / `built`；build 完成 = 所有 DATA shard 生成并写入 checksum；`--gen-only` 由 `shard make` 完成全部 shard 后置 `built` | — |
+| **dataset status** | dataset SQLite 生命周期：`building` / `built`；build 完成 = 所有 DATA shard 生成并写入 checksum；`--gen-only` 全部 `shard make` 完成后执行 `dataset mark-built` 置 `built` | — |
 | **frozen（冻结）** | dataset SQLite 首次在 PG 注册成功后转为只读；冻结后不再修改 | — |
 | **file** | dataset 中的原始文件 | — |
 | **segment** | file 在 shard 内的一个字节区间，记录 offset/size/csize | — |
 | **dataset_key** | dataset 在 arcset 内的唯一短标识，用于数据 shard 文件名前缀；缺省 `ds<UID 去连字符后的前 8 位>`（如 `ds3f2a1c9b`），可显式指定；冲突直接报错 | — |
-| **shard_sort_regex** | dataset 属性：从 shard 文件名提取排序字段的正则（捕获组）；不使用 `group_regex` 别名 | — |
+| **shard_sort_regex** | dataset 属性：从 shard 文件名提取排序字段的正则（捕获组）；只决定 dataset 内逻辑顺序，不决定 arcset 物理位置；不使用 `group_regex` 别名 | — |
 | **shard_sort_index** | dataset 属性：逗号分隔的捕获组编号，决定排序优先级；不使用 `group_index` 别名 | — |
 | **partition_capacity** | 单个 partition 的容量 | 单盘磁带容量 |
 | **used_capacity** | partition 已写入 shard 的实际大小（压缩后），由 `SUM(t_shard.file_size)` 计算 | — |

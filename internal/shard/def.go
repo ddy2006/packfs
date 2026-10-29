@@ -63,6 +63,7 @@ func ParseDefName(filename string) (ShardDefName, error) {
 type DefFileMeta struct {
 	ArcsetID  int
 	DatasetID int
+	DatasetDB string
 }
 
 // ParseDefFile 解析 .def 文件内容，跳过空行和 # 注释行，返回 SegmentDef 列表。
@@ -91,6 +92,9 @@ func parseDefContent(r io.Reader) (DefFileMeta, []SegmentDef, error) {
 			}
 			if idStr, ok := strings.CutPrefix(line, "# dataset_id: "); ok {
 				fmt.Sscanf(idStr, "%d", &meta.DatasetID)
+			}
+			if dbPath, ok := strings.CutPrefix(line, "# dataset_db: "); ok {
+				meta.DatasetDB = strings.TrimSpace(dbPath)
 			}
 			continue
 		}

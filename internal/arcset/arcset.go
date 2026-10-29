@@ -4,14 +4,17 @@ import "time"
 
 // Arcset represents a row in the t_arcset table.
 type Arcset struct {
-	ID          int
-	Name        string
-	Label       string
-	Metadata    map[string]any
-	Status      string
-	CurrentPath string
-	LastCheck   time.Time
-	Comment     string
+	ID             int
+	Name           string
+	Label          string
+	Metadata       map[string]any
+	Status         string
+	BuildPhase     string
+	Health         string
+	ParityDegraded bool
+	CurrentPath    string
+	LastCheck      time.Time
+	Comment        string
 }
 
 // Filter for querying arcsets.
@@ -33,4 +36,3 @@ type DatasetRef struct {
 	ID   int
 	Name string
 }
-

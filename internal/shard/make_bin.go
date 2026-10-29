@@ -13,7 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func makeBin(ctx context.Context, db *sql.DB, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
+func makeBin(ctx context.Context, db *sql.DB, store ShardWriter, cfg MakeConfig, segs []SegmentDef, outputPath string) (*MakeResult, error) {
 	isSegmentCompress, isShardCompress, isXZ := parseCompressMode(cfg.Compress)
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
@@ -25,8 +25,6 @@ func makeBin(ctx context.Context, db *sql.DB, cfg MakeConfig, segs []SegmentDef,
 		return nil, errors.WrapE(err, "create shard file", "path", outputPath)
 	}
 	defer out.Close()
-
-	store := NewSQLiteStore(db)
 
 	type segInfo struct {
 		offset   int64

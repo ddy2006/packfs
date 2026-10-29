@@ -13,17 +13,33 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// CreateOptions controls dataset creation.
+type CreateOptions struct {
+	UID    string
+	Status string
+}
+
 // CreateFromDir recursively scans a directory and creates a dataset with file records.
 func CreateFromDir(ctx context.Context, store Store, dirPath, dsName string) (*Dataset, error) {
+	return CreateFromDirWithOptions(ctx, store, dirPath, dsName, CreateOptions{})
+}
+
+// CreateFromDirWithOptions is CreateFromDir with an optional UID/status.
+func CreateFromDirWithOptions(ctx context.Context, store Store, dirPath, dsName string, opts CreateOptions) (*Dataset, error) {
 	absPath, err := filepath.Abs(dirPath)
 	if err != nil {
 		return nil, errors.WrapE(err, "resolve absolute path", "dir", dirPath)
 	}
 
+	status := opts.Status
+	if status == "" {
+		status = "building"
+	}
 	ds := &Dataset{
+		UID:         opts.UID,
 		Name:        dsName,
 		CurrentPath: absPath,
-		Status:      "active",
+		Status:      status,
 	}
 	if err := store.Create(ctx, ds); err != nil {
 		return nil, err

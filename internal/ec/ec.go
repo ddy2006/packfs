@@ -29,11 +29,20 @@ type Config struct {
 }
 
 // ParseConfig parses an EC config string in "k+m" format (e.g. "8+4").
+// A bare "k" means no EC (m=0).
 func ParseConfig(s string) (Config, error) {
-	parts := strings.SplitN(s, "+", 2)
-	if len(parts) != 2 {
-		return Config{}, fmt.Errorf("invalid ec config %q: expected format k+m", s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return Config{}, fmt.Errorf("empty ec config")
 	}
+	if !strings.Contains(s, "+") {
+		k, err := strconv.Atoi(s)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid ec config %q: k is not an integer", s)
+		}
+		return Config{K: k, M: 0}, nil
+	}
+	parts := strings.SplitN(s, "+", 2)
 	k, err := strconv.Atoi(strings.TrimSpace(parts[0]))
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid ec config %q: k is not an integer", s)
@@ -50,17 +59,20 @@ func (c Config) Total() int { return c.K + c.M }
 
 // Validate checks parameter constraints.
 func (c Config) Validate() error {
-	if c.K <= 0 || c.M <= 0 {
-		return fmt.Errorf("k and m must be positive, got k=%d m=%d", c.K, c.M)
-	}
-	if c.K+c.M > 255 {
-		return fmt.Errorf("k+m must not exceed 255 (RS hard limit), got %d", c.K+c.M)
+	if c.K <= 0 {
+		return fmt.Errorf("k must be positive, got k=%d", c.K)
 	}
 	if c.K > 24 {
 		return fmt.Errorf("k must not exceed 24 (engineering limit), got %d", c.K)
 	}
+	if c.M == 0 {
+		return nil
+	}
 	if c.M != 2 && c.M != 4 && c.M != 6 {
-		return fmt.Errorf("m must be 2, 4, or 6, got %d", c.M)
+		return fmt.Errorf("m must be 0, 2, 4, or 6, got %d", c.M)
+	}
+	if c.K+c.M > 24 {
+		return fmt.Errorf("k+m must not exceed 24 (engineering limit), got %d", c.K+c.M)
 	}
 	return nil
 }

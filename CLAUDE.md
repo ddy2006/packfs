@@ -20,11 +20,11 @@ packfs serve --addr=:8080       # 启动管理面板，WebUI 编译进二进制
 # 浏览器打开 http://localhost:8080
 ```
 
-- REST API 定义在 `internal/api/handler.go`（14 个端点）
+- REST API 仍在 `internal/api/handler.go`，目前还是旧单 SQLite 实现，待迁移到 dataset SQLite + PG。
 - 前端在 `webui/`，编译时通过 `embed.go` 的 `//go:embed all:webui` 嵌入
 - `cmd/cli/webui/serve.go`：serve 命令 + 路由注册
-- WebUI 与 CLI 共用 `internal/` Store 层，数据完全一致
-- 工作流管道展示完整流程：源目录 → Dataset → Shard → Arcset → EC → 磁带
+- CLI 核心链路已切到新存储；WebUI/API 尚未切完，不能假设与 CLI 数据一致。
+- 工作流管道末端为“移交下游存储”，不展示介质/磁带状态。
 
 ## 项目概述
 
@@ -48,7 +48,7 @@ dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_
 | `cmd/cli/` | CLI 适配层 + cobra 命令 | `cmd/cli/README.md`、`cmd/cli/CLAUDE.md` |
 | `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/design/`、`docs/todo.md` |
 | `webui/` | 前端管理面板（真实 API 驱动） | `webui/README.md` |
-| `internal/api/` | REST handler，15 个端点 | 本文件 |
+| `internal/api/` | REST handler（旧单 SQLite，待迁移） | 本文件 |
 | `internal/fuse/` | 只读 FUSE 文件系统（hanwen/go-fuse/v2） | 本文件 |
 | `internal/simulate/` | 仿真数据生成（crypto/rand） | 本文件 |
 | `cmd/cli/webui/` | `packfs serve` 命令 | 本文件 |
@@ -57,17 +57,16 @@ dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_
 
 ## 数据库
 
-SQLite 为主，路径由 `SQLITE_DB` 环境变量指定（缺省 `~/data/packfs.db`），首次自动建表。支持 PostgreSQL 扩展。
+核心链路使用两层存储，见 `docs/design/storage-architecture.md`：
 
-目标架构（尚未实现）见 `docs/design/storage-architecture.md`：每个 dataset 一个 SQLite（file/segment/DATA shard），arcset 元数据在全局 PostgreSQL。
-
-大部分业务字段（create_time, format, shard_max_bytes 等）存在 JSON `metadata` 列中，表结构仅保留 id、name、关联 FK 等核心列。
+- 每个 dataset 一个 SQLite：`--db-dir` / `PACKFS_DATASET_DB_DIR`，缺省 `~/data/packfs/datasets/<uid>.db`；保存 `t_dataset` / `t_file` / `t_shard`(DATA) / `t_segment`。
+- arcset 元数据使用全局 PostgreSQL：`PACKFS_PG_URL`；保存 `t_dataset_ref` / `t_arcset` / `r_arcset_dataset_ref` / `t_shard`(DATA/EC/PAD) / `t_fs_mount`。
+- 旧 `SQLITE_DB` / `~/data/packfs.db` 仅剩旧命令路径，逐步清理；新代码不要依赖它。
+- 大部分业务字段在 JSON `metadata` 列中，表结构只保留 id、关联键和核心状态。
 
 `dataset create` 用 `BatchAddFileRecords`（多值 INSERT，199 行/批），10 万文件 ~11s。`PACKFS_BATCH_INSERT` 可调批大小。
 
 ## 状态机
-
-目标模型（代码尚未实现）：
 
 ```
 dataset SQLite:  building ──所有 DATA shard 完成──> built ──首次 arcset 注册──> frozen
@@ -84,9 +83,9 @@ arcset:          defined ──> building ──> completed
 
 ## EC 纠删码
 
-`shard make-ec` 将 arcset 中的 DATA shard 按 RS(k+m) 编码。参数约束：k 1..24；m 为 0 或 `{2,4,6}`；`k+m ≤ 24`。`m=0` 表示不启用 EC。
+`arcset make-ec` 将 arcset 中的 DATA shard 按 RS(k+m) 编码。参数约束：k 1..24；m 为 0 或 `{2,4,6}`；`k+m ≤ 24`。`m=0` 表示不启用 EC。
 
-100GB 级 shard 必须使用 `docs/design/ec-streaming.md` 的分块流式编码/恢复/校验；当前 `internal/ec` 的 `os.ReadFile` 实现只适用于小文件。
+100GB 级 shard 使用 `internal/ec/stream.go` 的分块流式编码/恢复/校验；`internal/makeec`、`internal/recoverec`、`internal/validate` 已使用。旧 `internal/ec` 非流式 API 仅供测试兼容。
 
 ```sh
 # 创建 arcset 时指定 EC 参数（--ec=8 表示无 EC）
@@ -94,10 +93,11 @@ packfs arcset create --name=my-arc --target-root=/data/arc --ec=8+4
 
 # 注册 dataset（dataset SQLite）后执行 EC 编码
 packfs arcset append --id=1 --dataset-db=/data/datasets/<uid>.db
-packfs shard make-ec --arcset-id=1
+packfs arcset build-data --id=1
+packfs arcset make-ec --id=1
 
 # 恢复丢失的 shard
-packfs shard recover --arcset-id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
+packfs arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 ```
 
 EC 后的文件命名：`<partition>/<seq>D-<dataset_key>-<原名>`（数据）/ `<partition>/<seq>E.<ext>`（校验）/ `<partition>/<seq>P.<ext>`（PAD）。
@@ -107,8 +107,7 @@ EC 后的文件命名：`<partition>/<seq>D-<dataset_key>-<原名>`（数据）/
 1. 校验所有 DATA shard checksum。
 2. 确认 shard 数量 ≥ `shard_count`。
 3. `t_dataset.status=built`；dataset SQLite 保持可写，首次 arcset 注册后冻结。
-
-目标架构取消 `dataset finalize` 及全局 `packfs.db` 复制。
+4. `--gen-only` + 外部 `shard make` 完成后执行 `dataset mark-built`；不再使用 `dataset finalize`，不复制全局 `packfs.db`。
 
 ## Shard 分组逻辑
 

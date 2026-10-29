@@ -33,7 +33,11 @@ func DecompressAll(data []byte, isXZ bool) ([]byte, error) {
 
 // UnpackShardFile unpacks a single shard file into targetRoot directory.
 // Returns the number of files extracted.
-func UnpackShardFile(ctx context.Context, store Store, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
+type UnpackStore interface {
+	ListUnpackInfo(ctx context.Context, shardID int) ([]UnpackInfo, error)
+}
+
+func UnpackShardFile(ctx context.Context, store UnpackStore, shardID int, shardAbsPath, targetRoot, compress, format string) (int, error) {
 	infos, err := store.ListUnpackInfo(ctx, shardID)
 	if err != nil {
 		return 0, err

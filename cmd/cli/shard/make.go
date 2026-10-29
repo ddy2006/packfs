@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/dataset"
@@ -22,20 +23,92 @@ func makeCmd() *cobra.Command {
 			if defFile == "" {
 				return errors.NewUsage("--def-file is required")
 			}
+			outputDir, _ := cmd.Flags().GetString("output-dir")
+
+			_, meta, segs, err := shard.ReadDefFileMeta(defFile)
+			if err != nil {
+				return errors.WrapE(err, "read def file")
+			}
+			if meta.DatasetDB != "" {
+				return doMakeShardDataset(defFile, meta, segs, outputDir)
+			}
 
 			sqlDB, err := db.OpenSQLite()
 			if err != nil {
 				return errors.WrapE(err, "open database")
 			}
 			defer sqlDB.Close()
-
-			outputDir, _ := cmd.Flags().GetString("output-dir")
 			return doMakeShard(sqlDB, defFile, outputDir)
 		},
 	}
 	cmd.Flags().String("def-file", "", "absolute path to shard definition file")
 	cmd.Flags().String("output-dir", "", "override output directory for shard file")
 	return cmd
+}
+
+// doMakeShardDataset is the per-dataset SQLite path. The .def file carries
+// "# dataset_db: <path>"; no global SQLite is opened.
+func doMakeShardDataset(defFile string, meta shard.DefFileMeta, segs []shard.SegmentDef, outputDir string) error {
+	dbPath := meta.DatasetDB
+	if !filepath.IsAbs(dbPath) {
+		dbPath = filepath.Join(filepath.Dir(defFile), dbPath)
+	}
+	datasetDB, err := db.OpenDatasetSQLite(dbPath, false)
+	if err != nil {
+		return errors.WrapE(err, "open dataset sqlite", "path", dbPath)
+	}
+	defer datasetDB.Close()
+
+	ctx := context.Background()
+	dsStore := dataset.NewDatasetStore(datasetDB)
+	ds, err := findDatasetForDef(ctx, dsStore, meta.DatasetID)
+	if err != nil {
+		return err
+	}
+
+	compress, _ := ds.Metadata["compress"].(string)
+	format, _ := ds.Metadata["format"].(string)
+	if format == "" {
+		format = "bin"
+	}
+	sourceRoot := ds.CurrentPath
+
+	targetRoot := outputDir
+	if targetRoot == "" {
+		targetRoot, _ = ds.Metadata["shard_root"].(string)
+	}
+	if targetRoot == "" {
+		targetRoot = ds.CurrentPath
+	}
+
+	outName := strings.TrimSuffix(filepath.Base(defFile), ".def")
+	outPath := filepath.Join(targetRoot, outName)
+
+	cfg := shard.MakeConfig{
+		Format:     format,
+		Compress:   compress,
+		SourceRoot: sourceRoot,
+		DatasetID:  ds.ID,
+		Seq:        -1,
+	}
+	_, err = shard.MakeShardWithWriter(ctx, datasetDB, shard.NewDatasetStore(datasetDB),
+		cfg, segs, outPath)
+	return err
+}
+
+func findDatasetForDef(ctx context.Context, store *dataset.DatasetStore, id int) (*dataset.Dataset, error) {
+	if id > 0 {
+		return store.FindByID(ctx, id)
+	}
+	limit := 1
+	all, err := store.Find(ctx, dataset.Filter{Limit: &limit})
+	if err != nil {
+		return nil, errors.WrapE(err, "list datasets in sqlite")
+	}
+	if len(all) == 0 {
+		return nil, errors.E("dataset sqlite contains no dataset")
+	}
+	return all[0], nil
 }
 
 func doMakeShard(sqlDB *sql.DB, defFile, outputDir string) error {
@@ -87,8 +160,8 @@ func doMakeShard(sqlDB *sql.DB, defFile, outputDir string) error {
 		targetRoot = outputDir
 	}
 
-	outName := defFile[:len(defFile)-4]
-	outPath := filepath.Join(targetRoot, filepath.Base(outName))
+	outName := strings.TrimSuffix(filepath.Base(defFile), ".def")
+	outPath := filepath.Join(targetRoot, outName)
 
 	cfg := shard.MakeConfig{
 		Format:     format,
