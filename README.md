@@ -42,8 +42,9 @@ packfs arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 
 - `PACKFS_PG_URL`：arcset 全局 PostgreSQL DSN。
 - `PACKFS_DATASET_DB_DIR`：dataset SQLite 缺省目录。
+- `PACKFS_TEST_PG_URL`：仅测试用；PG 集成测试在临时 schema 中运行，未设置时跳过。
 
-完整应用验收见 `examples/astro/`；`packfs serve` / WebUI 尚未迁移到新两层存储。
+完整应用验收见 `examples/astro/`；WebUI 通过 `packfs serve --db-dir=...` 启动，arcset 功能需要 `PACKFS_PG_URL`。
 
 ## 打包格式
 

@@ -146,6 +146,6 @@ func makeIso(ctx context.Context, db *sql.DB, store ShardWriter, cfg MakeConfig,
 		return nil, err
 	}
 
-	fmt.Printf("created shard %s (%d bytes, sha256=%s, %d segments)\n", outputPath, shardFileSize, shardChecksum, len(segInfos))
+	fmt.Fprintf(os.Stderr, "created shard %s (%d bytes, sha256=%s, %d segments)\n", outputPath, shardFileSize, shardChecksum, len(segInfos))
 	return &MakeResult{Path: outputPath, Size: shardFileSize, Checksum: shardChecksum, Segments: len(segInfos)}, nil
 }

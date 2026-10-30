@@ -1,6 +1,7 @@
-# TODO
+# TODO（历史记录）
 
-> 2026-10-23：缺口与概要设计（讨论中）见 [design/README.md](design/README.md)。
+> 本文保留 2026-10-23 ~ 2026-10-29 的实施记录，部分命令/API 已废弃。
+> 当前实现状态与后续缺口见 [design/README.md](design/README.md)；API 见 [design/api-webui.md](design/api-webui.md)。
 
 ## 实施计划进度
 

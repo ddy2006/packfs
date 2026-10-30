@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ddy2006/packfs/internal/arcset"
 	"github.com/ddy2006/packfs/internal/ec"
@@ -21,6 +22,7 @@ type Options struct {
 	ChunkSize int
 	Group     *int
 	Stripe    *int
+	Parallel  int
 }
 
 // Run builds all EC/PAD shards for an arcset.
@@ -30,6 +32,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 	}
 	if err := ec.ValidateChunkSize(opts.ChunkSize); err != nil {
 		return err
+	}
+	if opts.Parallel <= 0 {
+		opts.Parallel = 1
 	}
 	store := arcset.NewPGStore(pool)
 	a, err := store.FindByID(ctx, opts.ArcsetID)
@@ -87,14 +92,53 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 		return fmt.Errorf("no matching stripes")
 	}
 
-	for _, key := range keys {
-		if err := buildStripe(ctx, store, a, meta, key, stripes[key], opts.ChunkSize); err != nil {
-			return fmt.Errorf("stripe group=%d seq=%d: %w", key.group, key.stripe, err)
-		}
+	if err := buildStripes(ctx, store, a, meta, keys, stripes, opts.ChunkSize, opts.Parallel); err != nil {
+		return err
 	}
 
 	if opts.Group == nil && opts.Stripe == nil {
 		return store.CompleteBuild(ctx, opts.ArcsetID)
+	}
+	return nil
+}
+
+// buildStripes encodes the selected stripes, up to parallel at a time.
+// Stripes are independent: each writes only its own EC/PAD files and PG rows.
+func buildStripes(ctx context.Context, store *arcset.PGStore, a *arcset.Arcset,
+	meta meta, keys []stripeKey, stripes map[stripeKey]map[int]*arcset.ShardRow,
+	chunkSize, parallel int) error {
+
+	if parallel > len(keys) {
+		parallel = len(keys)
+	}
+	if parallel <= 1 {
+		for _, key := range keys {
+			if err := buildStripe(ctx, store, a, meta, key, stripes[key], chunkSize); err != nil {
+				return fmt.Errorf("stripe group=%d seq=%d: %w", key.group, key.stripe, err)
+			}
+		}
+		return nil
+	}
+
+	sem := make(chan struct{}, parallel)
+	errCh := make(chan error, len(keys))
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		key := key
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := buildStripe(ctx, store, a, meta, key, stripes[key], chunkSize); err != nil {
+				errCh <- fmt.Errorf("stripe group=%d seq=%d: %w", key.group, key.stripe, err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		return err
 	}
 	return nil
 }

@@ -5,8 +5,8 @@
 ## 实现状态（2026-10-29）
 
 - 已实现 `EncodeStripeStreaming`、`ReconstructStripeStreaming`、`VerifyStripeStreaming`，默认 chunk 8MiB。
-- `arcset make-ec` 已支持 `--ec-chunk-size`、`--group`、`--seq`；`arcset recover` 走流式恢复。
-- `--ec-parallel` 尚未实现，当前按 stripe 串行。
+- `arcset make-ec` 已支持 `--ec-chunk-size`、`--ec-parallel`、`--group`、`--seq`；`arcset recover` 走流式恢复。
+- `--ec-parallel` 按 stripe 并行，缺省 1（串行）；stripe 之间只共享只读元数据，PG 行按 stripe 隔离。
 - 旧非流式 API 保留，不再作为新调用路径。
 
 ## 1. 目标与约束
@@ -94,5 +94,5 @@
 ## 9. 待确认
 
 1. 默认 chunk 固定 8MiB；是否按 `k+m` 自动调整（当前未做）。
-2. `--ec-parallel` 尚未实现；并行 stripe 的磁盘带宽上限待定。
+2. `--ec-parallel` 已实现；并行 stripe 的磁盘带宽上限仍待实测。
 3. 旧非流式 API 仅保留测试兼容，后续可删除。

@@ -8,10 +8,10 @@
 cmd/cli/
 ├── main.go               # 入口，组装 cobra 命令树
 ├── root.go               # package main：rootCmd、日志初始化、错误处理
-├── dataset/dataset.go    # package dataset：create、list 命令逻辑
-├── arcset/arcset.go      # package arcset：create、gen-def、unpack、validate、finalize 命令逻辑
-├── shard/shard.go        # package shard：make、unpack、validate、make-ec、recover 命令逻辑
-├── fs/fs.go              # package fs：mount、umount、fsck 命令逻辑
+├── dataset/dataset.go    # package dataset：create、list、mark-built、unpack
+├── arcset/arcset.go      # package arcset：create、append、build-data、make-ec、validate、recover、export、list
+├── shard/shard.go        # package shard：make、unpack、validate
+├── fs/fs.go              # package fs：mount、umount、list、fsck
 └── README.md
 ```
 
@@ -32,7 +32,7 @@ internal/<domain>/  →  领域模型 + Store 接口 + 业务逻辑
 
 ## Shard 定义文件（.def）
 
-Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen-def` 生成，也支持用户自定义脚本生成。
+Shard 定义文件描述一个 shard 包含哪些文件/片段，由外部脚本（如 `examples/astro/gen-def.sh`）生成；`shard make` 消费。
 
 ### 分包逻辑
 
@@ -63,15 +63,16 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 首行为元数据注释，后续每行一个 segment：
 
 ```
-# arcset_id: 1
+# dataset_db: /data/datasets/<uid>.db
 # dataset_id: 3
 相对路径/to/file_a.txt
 相对路径/to/file_b.txt
 ```
 
-- `# arcset_id: N`：arcset 标识，`shard make` 据此获取输出目录（`t_arcset.current_path`）。
-- `# dataset_id: N`：数据集标识，`shard make` 据此获取源目录（`t_dataset.current_path`）。
-- 后续每行一个相对路径（相对于 `dataset.current_path`），完整文件。
+- `# dataset_db: <path>`：`shard make` 打开该 dataset SQLite，读取源目录、format/compress 与输出目录。
+- `# dataset_id: N`：可选；dataset SQLite 内通常只有一行，缺省取第一行。
+- `# arcset_id: N`：旧路径；仅在没有 `# dataset_db` 时使用，新流程不再生成。
+- 后续每行一个相对路径（相对于 `t_dataset.current_path`），完整文件。
 - 一个 shard 不会跨多个 dataset。
 
 ### JSON 字段
@@ -84,132 +85,113 @@ Shard 定义文件描述一个 shard 包含哪些文件/片段，由 `arcset gen
 
 ## 命令参考
 
-### arcset
+环境变量：
 
-```sh
-# 创建归档集（target-root 写入 t_arcset.current_path）
-packfs arcset create \
-  --target-root=/data/output \
-  --name=arcset-001 \
-  --dataset-ids=1,2,3
-
-# 生成 shard 定义文件（内置模式）
-packfs arcset gen-def --id=1 --target-root=/data/output
-
-# 脚本模式（自定义分组）
-packfs arcset gen-def --id=1 --target-root=/data/output --script=./my-gen.sh
-
-# 校验所有 shard checksum
-packfs arcset validate --id=1
-
-# 封存 arcset（校验 → 复制 DB → 归一 ID → 设状态）
-packfs arcset finalize --id=1
-
-# 解包归档集
-packfs arcset unpack \
-  --source-root=/data/archives \
-  --target-root=/data/extracted \
-  [--dataset-id=1] \
-  [--dataset-name=<regex>]
-```
-
-| 子命令 | 参数 | 必填 | 说明 |
-|--------|------|------|------|
-| `create` | `--target-root` | 是 | 输出根目录（写入 current_path） |
-| | `--name` | 是 | arcset 名称 |
-| | `--dataset-ids` | 是 | 关联的 dataset ID，逗号分隔 |
-| | `--format` | 否 | 打包格式 bin/iso/tar（缺省 bin） |
-| | `--shard-max-bytes` | 否 | shard 最大字节数 |
-| | `--compress` | 否 | 压缩配置：`zstd`、`segment:zstd`、`zstd_seekable`、`segment:xz`、`xz` |
-| `gen-def` | `--id` | 是 | arcset ID |
-| | `--target-root` | 是 | shard-def 文件输出目录 |
-| | `--script` | 否 | 外部脚本路径（接收 --id 和 --target-root） |
-| `unpack` | `--source-root` | 是 | shard 文件所在根目录 |
-| | `--target-root` | 是 | 解包输出根目录 |
-| | `--dataset-id` | 否 | 按 dataset ID 筛选 |
-| | `--dataset-name` | 否 | 按 dataset 名称筛选（支持 regex） |
-| `validate` | `--id` | 是 | arcset ID |
-| `finalize` | `--id` | 是 | arcset ID |
-
-### shard
-
-```sh
-# 打包单个 shard（源路径和目标路径从 DB 自动获取）
-packfs shard make \
-  --def-file=/absolute/path/to/0000.bin.def
-
-# 解包单个 shard（tar 格式自带边界，不需要 --arcset-id）
-packfs shard unpack \
-  --shard-file=/data/0000.tar.zst \
-  [--target-root=/data/extracted]
-
-# 解包 bin 格式 shard（需要 --arcset-id 定位文件边界）
-packfs shard unpack \
-  --shard-file=/data/shard_001.bin \
-  --target-root=/data/extracted \
-  --arcset-id=1
-
-# 生成纠删码 shard
-packfs shard make-ec \
-  --def-file=ec_config.yaml
-
-# 从 EC shard 恢复数据
-packfs shard recover \
-  --ec-shard-file=/data/shard_001.ec \
-  --target-root=/data/recovered
-```
-
-| 子命令 | 参数 | 必填 | 说明 |
-|--------|------|------|------|
-| `make` | `--def-file` | 是 | shard 定义文件绝对路径（含 `# arcset_id`） |
-| `unpack` | `--shard-file` | 是 | 待解包的 shard 文件 |
-| | `--target-root` | 否 | 解包输出目录（缺省当前目录） |
-| | `--arcset-id` | 否 | arcset ID，bin 格式必填，tar 格式不需要 |
-| `make-ec` | `--def-file` | 是 | EC 定义的 YAML 文件 |
-| `recover` | `--ec-shard-file` | 是 | 用于恢复的 EC shard 文件 |
-| | `--target-root` | 是 | 恢复输出目录 |
+- `PACKFS_PG_URL`：arcset 元数据 PostgreSQL DSN。
+- `PACKFS_DATASET_DB_DIR`：dataset SQLite 缺省目录，未设置时 `~/data/packfs/datasets`。
 
 ### dataset
 
 ```sh
-# 从目录递归创建数据集
+# 扫描源目录并直接生成 DATA shard
 packfs dataset create \
   --root-dir=/data/source \
-  [--name=my-dataset]
+  --db-dir=/data/datasets \
+  --target-root=/data/shards \
+  [--name=astro] [--format=bin] [--compress=zstd] [--shard-max-bytes=1073741824]
 
-# 列出数据集
-packfs dataset list \
-  [--dataset-id=1] \
-  [--dataset-name=<regex>]
+# 只创建 SQLite，DATA shard 由外部 shard make 生成
+packfs dataset create ... --gen-only
+packfs dataset mark-built --dataset-db=/data/datasets/<uid>.db
+
+# 列出目录中的 dataset
+packfs dataset list --db-dir=/data/datasets [--name=astro] [--status=built]
+
+# 从 DATA shard 还原文件
+packfs dataset unpack \
+  --dataset-db=/data/datasets/<uid>.db \
+  --target-root=/data/restore \
+  [--source-root=/data/shards]
 ```
 
-| 子命令 | 参数 | 必填 | 说明 |
-|--------|------|------|------|
-| `create` | `--root-dir` | 是 | 源根目录（递归扫描） |
-| | `--name` | 否 | dataset 名称，默认 root-dir 最后一级 |
-| `list` | `--dataset-id` | 否 | 按 ID 筛选 |
-| | `--dataset-name` | 否 | 按名称筛选（支持 regex） |
+| 子命令 | 主要参数 |
+|--------|----------|
+| `create` | `--root-dir`、`--db-dir`、`--target-root`、`--name`、`--format`、`--compress`、`--shard-max-bytes`、`--shard-sort-regex`、`--shard-sort-index`、`--gen-only` |
+| `mark-built` | `--dataset-db` |
+| `list` | `--db-dir`、`--name`、`--status` |
+| `unpack` | `--dataset-db`、`--target-root`、`--source-root` |
+
+### arcset
+
+```sh
+# 定义 arcset（元数据写 PostgreSQL）
+packfs arcset create \
+  --name=arc1 --target-root=/data/arc1 \
+  --ec=8+4 --groups=1 --layout=raid3 \
+  --partition-capacity=18TB
+
+# 注册 dataset、布局、EC、校验、导出
+packfs arcset append --id=1 --dataset-db=/data/datasets/<uid>.db
+packfs arcset build-data --id=1
+packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB] [--ec-parallel=1] [--group=0] [--seq=0]
+packfs arcset validate --id=1 --stage=all
+packfs arcset export --id=1 [--target-root=/data/export]
+
+# 扩容、查看与恢复
+packfs arcset expand --id=1 --add-groups=2
+packfs arcset list [--id=1] [--status=completed]
+packfs arcset show --id=1
+packfs arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar [--target=all]
+```
+
+| 子命令 | 主要参数 |
+|--------|----------|
+| `create` | `--name`、`--target-root`、`--ec`、`--groups`、`--layout`、`--partition-width`、`--seq-width`、`--partition-capacity`、`--shard-max-bytes` |
+| `append` | `--id`、`--dataset-db`、`--dataset-key` |
+| `build-data` | `--id`、`--dataset-uid` |
+| `make-ec` | `--id`、`--ec-chunk-size`、`--ec-parallel`、`--group`、`--seq` |
+| `validate` | `--id`、`--stage=data|ec|all` |
+| `expand` | `--id`、`--add-groups` |
+| `recover` | `--id`、`--shard-file`、`--target=data|all`、`--ec-chunk-size` |
+| `export` | `--id`、`--target-root` |
+| `list` | `--id`（列出该 arcset 的 dataset）、`--status` |
+| `show` | `--id` |
+
+### shard
+
+```sh
+# 打包单个 shard；.def 头部含 # dataset_db
+packfs shard make --def-file=/absolute/path/to/0000.bin.def [--output-dir=...]
+
+# 解包单个 shard（tar/iso 自带边界；bin 需要 --arcset-id，旧路径）
+packfs shard unpack --shard-file=/data/0000.tar.zst [--target-root=/data/extracted]
+packfs shard unpack --shard-file=/data/0000.bin --arcset-id=1 --target-root=/data/extracted
+
+# 校验 shard checksum；bin 的 --arcset-id 仍依赖旧全局库
+packfs shard validate --shard-file=/data/0000.bin --arcset-id=1
+```
 
 ### fs
 
 ```sh
-# 挂载 arcset 为文件系统
-packfs fs mount \
-  --mount-point=/mnt/packfs \
-  --arcset-id=1
+# dataset 挂载（仅未吸收的 dataset）
+packfs fs mount --dataset-db=/data/datasets/<uid>.db --mount-point=/mnt/pk
 
-# 卸载文件系统
-packfs fs umount \
-  --mount-point=/mnt/packfs
+# arcset 挂载（根目录为 <dataset_key>/）
+packfs fs mount --arcset-id=1 --mount-point=/mnt/pk
 
-# 文件系统完整性检查
-packfs fs fsck \
-  --arcset-id=1
+packfs fs list
+packfs fs umount --mount-point=/mnt/pk
 ```
 
-| 子命令 | 参数 | 必填 | 说明 |
-|--------|------|------|------|
-| `mount` | `--mount-point` | 是 | 挂载点目录 |
-| | `--arcset-id` | 是 | 要挂载的 arcset ID |
-| `umount` | `--mount-point` | 是 | 挂载点目录 |
-| `fsck` | `--arcset-id` | 是 | 待检查的 arcset ID |
+`fs fsck` 仍是占位实现。
+
+### serve
+
+```sh
+packfs serve --addr=:8080 --db-dir=/data/packfs/datasets
+```
+
+- WebUI 与 REST API 编译在二进制内。
+- dataset 端点扫描 `--db-dir` 下的独立 SQLite；缺省 `$PACKFS_DATASET_DB_DIR` 或 `~/data/packfs/datasets`。
+- arcset 端点使用 `PACKFS_PG_URL`；未配置时 dataset 功能仍可用，arcset 返回 503。

@@ -21,27 +21,30 @@
 | [commands-db.md](commands-db.md) | 命令细化、DB 字段与索引、实施顺序 | P0 | 部分实现 |
 | [downstream-handoff.md](downstream-handoff.md) | 命名契约、manifest、分区映射 | P0 | 讨论中 |
 | [fuse.md](fuse.md) | mount/unmount/fsck、arcset 挂载、T_fs_mount | P0 | 部分实现 |
-| [api-webui.md](api-webui.md) | API 桩、缺失操作、WebUI 页签 | P0 | 未迁移 |
+| [api-webui.md](api-webui.md) | API 端点、WebUI 页签、剩余缺口 | P0 | 已实现（核心） |
 | [packaging.md](packaging.md) | 压缩校验、输出目录、gen-def、并行、ISO、scalebox | P1 | 讨论中 |
 | [platform.md](platform.md) | PostgreSQL、测试、文档同步、补全 | P1 | 部分实现 |
 
-## 实现状态（2026-10-29）
+## 实现状态（2026-10-30）
 
 已实现并通过 `examples/astro` 验收：
 
-- dataset：独立 SQLite、`dataset create`、`--gen-only`、`dataset mark-built`、`dataset unpack`
+- dataset：独立 SQLite、`dataset create`、`--gen-only`、`dataset mark-built`、`dataset unpack`、`dataset list`（扫描 `--db-dir`）
 - shard：`shard make` 读取 `# dataset_db`，写 dataset SQLite 的 shard/segment
-- arcset：PG `create` / `append` / `build-data` / `make-ec` / `validate` / `recover` / `export` / `list`
-- EC：分块流式编码、恢复、校验；默认 chunk 8MiB
+- arcset：PG `create` / `append` / `build-data` / `make-ec` / `validate` / `expand` / `recover` / `export` / `list` / `show`
+- EC：分块流式编码、恢复、校验；默认 chunk 8MiB，`make-ec` 支持 `--ec-parallel`
 - FUSE：dataset/arcset 索引、PG `t_fs_mount`、`fs list`、`fs umount` 已落地；实际 mount 尚未做运行验证
+- API/WebUI：`packfs serve` 已切到 dataset SQLite + PG；dataset/arcset/shard/EC/挂载记录端点已实现，WebUI 管道与表单已适配
 - examples：`pack-serial.sh` 与 `full-pipeline.sh --with-ec` 已改为新 CLI；全流程通过
 
 尚未完成：
 
-- `internal/api` / WebUI 仍是旧单 SQLite 实现，`packfs serve` 未迁移。
-- `arcset show`、`arcset expand` 未实现；`dataset list` 仍走旧全局库。
-- `--ec-parallel` 参数未实现；`shard make-ec` / `shard recover` 仍为旧路径。
-- 旧命令 `dataset validate` / `dataset finalize` / `arcset rebuild` 尚未从命令树移除。
+- FUSE 实际 mount 在本机 macFUSE 环境阻塞；索引测试已覆盖 dataset 和 arcset 跨库索引。
+- 尚无 100GB 级内存基准、PG schema 迁移测试和 WebUI 浏览器自动化。
+- `shard validate` 的 bin 路径仍依赖旧全局库。
+- WebUI 尚未提供 FUSE 挂载/卸载页签；API 只提供挂载记录列表和删除。
+
+已移除旧命令：`dataset validate` / `dataset finalize` / `arcset rebuild` / `shard make-ec` / `shard recover`。
 
 ## 本轮确认的设计方向
 

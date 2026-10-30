@@ -17,9 +17,10 @@ func Command() *cobra.Command {
 	cmd.AddCommand(buildDataCmd())
 	cmd.AddCommand(makeECCmd())
 	cmd.AddCommand(validateCmd())
+	cmd.AddCommand(expandCmd())
 	cmd.AddCommand(recoverCmd())
 	cmd.AddCommand(exportCmd())
 	cmd.AddCommand(listCmd())
-	cmd.AddCommand(rebuildCmd())
+	cmd.AddCommand(showCmd())
 	return cmd
 }

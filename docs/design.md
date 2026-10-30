@@ -228,7 +228,7 @@ arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 
 ## WebUI 管理面板
 
-`packfs serve --addr=:8080` 启动内嵌 HTTP server，WebUI 编译进二进制，零外部依赖。
+`packfs serve --addr=:8080 --db-dir=/data/packfs/datasets` 启动内嵌 HTTP server，WebUI 编译进二进制。dataset 端点读独立 SQLite，arcset 端点使用 `PACKFS_PG_URL`；未配置 PG 时 dataset 功能仍可用。
 
 ### 架构
 
@@ -241,19 +241,25 @@ arcset recover --id=1 --shard-file=00/000D-ds3f2a1c9b-0000.tar
 ### REST API
 
 ```
-GET    /api/health                           → 健康检查
+GET    /api/health                           → 健康检查（含 PG 状态）
+GET    /api/datasets                         → 扫描 dataset 目录
 POST   /api/datasets                         → 创建 dataset SQLite
 GET    /api/datasets/{uid}                   → dataset 详情
+GET    /api/datasets/{uid}/files|shards      → 文件 / shard 清单
+POST   /api/datasets/{uid}/mark-built        → 校验并置 built
+POST   /api/datasets/{uid}/make-shards       → 为 --gen-only dataset 生成 shard
 POST   /api/datasets/{uid}/unpack            → 解包
 
 GET    /api/arcsets                          → 列表（PG）
 POST   /api/arcsets                          → 创建
+GET    /api/arcsets/{id}                     → 详情 + dataset relation
 POST   /api/arcsets/{id}/append              → 注册 dataset、冻结 SQLite
 POST   /api/arcsets/{id}/build-data          → 移动 DATA shard
 POST   /api/arcsets/{id}/make-ec|validate|recover|expand|export
+GET    /api/arcsets/{id}/shards|plan         → shard 清单 / 条带布局
 
-GET    /api/fs/mounts                        → PG 挂载列表
-POST   /api/fs/mount|unmount                 → 挂载/卸载
+GET    /api/fs/mounts                        → PG 挂载记录列表
+DELETE /api/fs/mounts?mount_point=...        → 删除挂载记录
 ```
 
 完整端点与缺口见 [design/api-webui.md](design/api-webui.md)。
@@ -267,7 +273,7 @@ POST   /api/fs/mount|unmount                 → 挂载/卸载
 
 ### 与 CLI 的关系
 
-WebUI 和 CLI 共用 `internal/` 下的 Store 和业务逻辑，数据完全一致。WebUI 上创建、删除、EC 编码等操作等同于执行 CLI 命令。
+WebUI 和 CLI 共用 `datasetops` / `arcsetops` / `builddata` / `makeec` / `validate` / `recoverec` / `export`，数据一致。WebUI 上创建 dataset、append、build-data、EC 编码、校验、导出等操作等同于执行 CLI 命令。挂载/卸载仍由 CLI 触发。
 
 ## 幂等性
 

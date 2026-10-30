@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kaichao/gopkg/errors"
 	"github.com/kdomanski/iso9660"
@@ -29,6 +30,26 @@ func DecompressAll(data []byte, isXZ bool) ([]byte, error) {
 	}
 	defer r.Close()
 	return io.ReadAll(r)
+}
+
+// safeJoin joins a relative path to root and rejects absolute or escaping paths.
+func safeJoin(root, rel string) (string, error) {
+	if rel == "" || filepath.IsAbs(rel) {
+		return "", errors.E("unsafe shard entry path", "path", rel)
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.E("unsafe shard entry path", "path", rel)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", errors.WrapE(err, "resolve unpack target", "path", root)
+	}
+	outPath := filepath.Join(rootAbs, clean)
+	if outPath != rootAbs && !strings.HasPrefix(outPath, rootAbs+string(filepath.Separator)) {
+		return "", errors.E("unsafe shard entry path", "path", rel)
+	}
+	return outPath, nil
 }
 
 // UnpackShardFile unpacks a single shard file into targetRoot directory.
@@ -76,7 +97,10 @@ func UnpackShardFile(ctx context.Context, store UnpackStore, shardID int, shardA
 				continue
 			}
 
-			outPath := filepath.Join(targetRoot, hdr.Name)
+			outPath, err := safeJoin(targetRoot, hdr.Name)
+			if err != nil {
+				return count, err
+			}
 			if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 				return 0, err
 			}
@@ -134,7 +158,10 @@ func UnpackShardFile(ctx context.Context, store UnpackStore, shardID int, shardA
 	}
 
 	for _, info := range infos {
-		outPath := filepath.Join(targetRoot, info.FilePath)
+		outPath, err := safeJoin(targetRoot, info.FilePath)
+		if err != nil {
+			return 0, err
+		}
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return 0, err
 		}
@@ -175,7 +202,10 @@ func extractISO(dir *iso9660.File, targetRoot, prefix string, isSegmentCompress,
 			continue
 		}
 
-		outPath := filepath.Join(targetRoot, childRel)
+		outPath, err := safeJoin(targetRoot, childRel)
+		if err != nil {
+			return count, err
+		}
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return count, err
 		}

@@ -62,11 +62,11 @@
         </div>
       </div>
       <span class="pipe-arrow">→</span>
-      <div class="pipe-step pending" data-tab="arcset" data-step="tape">
-        <div class="pipe-icon">💾</div>
+      <div class="pipe-step pending" data-tab="arcset" data-step="downstream">
+        <div class="pipe-icon">🤝</div>
         <div class="pipe-info">
-          <span class="pipe-label">磁带归档</span>
-          <span class="pipe-path" id="pipe-tape">--</span>
+          <span class="pipe-label">下游存储</span>
+          <span class="pipe-path" id="pipe-downstream">移交下游存储</span>
         </div>
       </div>
     </div>
@@ -153,6 +153,10 @@
             <input type="text" id="ds-name" placeholder="默认取目录名">
           </div>
           <div class="field">
+            <label for="ds-target-root">Shard 输出目录 (--target-root)</label>
+            <input type="text" id="ds-target-root" placeholder="默认取源目录">
+          </div>
+          <div class="field">
             <label for="ds-format">打包格式 (--format)</label>
             <select id="ds-format">
               <option value="bin">bin</option>
@@ -192,7 +196,7 @@
         <table class="table" id="ds-table">
           <thead>
             <tr>
-              <th>ID</th><th>名称</th><th>文件数</th><th>总大小</th><th>Shard 数</th><th>格式</th><th>压缩</th><th>状态</th><th>操作</th>
+              <th>UID</th><th>名称</th><th>文件数</th><th>总大小</th><th>Shard 数</th><th>格式</th><th>压缩</th><th>状态</th><th>操作</th>
             </tr>
           </thead>
           <tbody id="ds-tbody">
@@ -214,16 +218,16 @@
 
         <div class="form-grid">
           <div class="field">
-            <label for="sh-dataset-id">Dataset ID</label>
+            <label for="sh-dataset-id">Dataset UID</label>
             <select id="sh-dataset-id"></select>
           </div>
           <div class="field">
-            <label for="sh-output-dir">输出目录 (--output-dir，可选)</label>
-            <input type="text" id="sh-output-dir" placeholder="默认: dataset 所在目录">
+            <label for="sh-output-dir">Shard 输出目录（只读）</label>
+            <input type="text" id="sh-output-dir" placeholder="由 dataset metadata 决定" readonly>
           </div>
           <div class="field field-btn">
-            <button class="btn btn-secondary" id="btn-preview-shard">预览 Shard 分组</button>
-            <button class="btn btn-primary" id="btn-make-shard">执行打包</button>
+            <button class="btn btn-secondary" id="btn-preview-shard">查看 Shard</button>
+            <button class="btn btn-primary" id="btn-make-shard">生成 Shards</button>
           </div>
         </div>
       </div>
@@ -239,10 +243,10 @@
         <h2 class="card-title">Shard 结果</h2>
         <table class="table" id="sh-table">
           <thead>
-            <tr><th>ID</th><th>文件名</th><th>类型</th><th>大小</th><th>输出位置</th><th>Segment 数</th><th>操作</th></tr>
+            <tr><th>ID</th><th>文件名</th><th>类型</th><th>大小</th><th>Segment 数</th><th>SHA256</th></tr>
           </thead>
           <tbody id="sh-tbody">
-            <tr class="placeholder"><td colspan="7">暂无 Shard</td></tr>
+            <tr class="placeholder"><td colspan="6">暂无 Shard</td></tr>
           </tbody>
         </table>
       </div>
@@ -266,17 +270,18 @@
             <select id="ec-arcset-id"></select>
           </div>
           <div class="field">
-            <label for="ec-config">EC 配置 (k+m)</label>
-            <select id="ec-config">
-              <option value="8+2">8+2（2 冗余，成本最优）</option>
-              <option value="8+4" selected>8+4（4 冗余，推荐）</option>
-              <option value="12+4">12+4（大容量）</option>
-              <option value="16+6">16+6（高容错）</option>
-            </select>
+            <label for="ec-config-info">EC 配置（创建 arcset 时确定）</label>
+            <input type="text" id="ec-config-info" readonly placeholder="由 arcset metadata 决定">
           </div>
           <div class="field field-btn">
+            <button class="btn btn-secondary" id="btn-build-data">布局数据</button>
             <button class="btn btn-secondary" id="btn-preview-ec">预览 EC 布局</button>
             <button class="btn btn-primary" id="btn-make-ec">执行 EC 编码</button>
+          </div>
+          <div class="field field-btn">
+            <button class="btn btn-secondary" id="btn-validate-ec">校验</button>
+            <button class="btn btn-secondary" id="btn-export-ec">导出 manifest</button>
+            <button class="btn btn-secondary" id="btn-expand-ec">扩容</button>
           </div>
         </div>
       </div>
@@ -339,15 +344,27 @@
               <option value="8+4" selected>8+4</option>
               <option value="12+4">12+4</option>
               <option value="16+6">16+6</option>
+              <option value="8">8（无 EC）</option>
             </select>
           </div>
           <div class="field">
-            <label for="as-tape-count">磁带数量 (--tape-count)</label>
-            <input type="number" id="as-tape-count" placeholder="可选" min="0">
+            <label for="as-groups">分组数 (--groups)</label>
+            <input type="number" id="as-groups" value="1" min="1">
           </div>
           <div class="field">
-            <label for="as-tape-max">单磁带字节数 (--tape-max-bytes)</label>
-            <input type="text" id="as-tape-max" placeholder="可选">
+            <label for="as-layout">布局 (--layout)</label>
+            <select id="as-layout">
+              <option value="raid3">raid3</option>
+              <option value="raid5">raid5</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="as-partition-capacity">单分区容量 (--partition-capacity) <span class="req">*</span></label>
+            <input type="text" id="as-partition-capacity" placeholder="例: 18TB" value="10GB">
+          </div>
+          <div class="field">
+            <label for="as-shard-max">Shard 大小上限 (--shard-max-bytes)</label>
+            <input type="text" id="as-shard-max" placeholder="可选，例: 1073741824">
           </div>
           <div class="field field-btn">
             <button type="submit" class="btn btn-primary">创建 Arcset</button>
@@ -365,7 +382,7 @@
             <select id="ap-arcset-id"></select>
           </div>
           <div class="field">
-            <label for="ap-dataset-id">Dataset ID</label>
+            <label for="ap-dataset-id">Dataset（未加入 arcset）</label>
             <select id="ap-dataset-id"></select>
           </div>
           <div class="field field-btn">
@@ -379,10 +396,10 @@
         <h2 class="card-title">Arcset 列表</h2>
         <table class="table" id="as-table">
           <thead>
-            <tr><th>ID</th><th>名称</th><th>EC 配置</th><th>目标目录</th><th>Dataset 数</th><th>Shard 数</th><th>状态</th><th>操作</th></tr>
+            <tr><th>ID</th><th>名称</th><th>EC</th><th>状态</th><th>健康</th><th>Dataset</th><th>Shard</th><th>容量</th><th>操作</th></tr>
           </thead>
           <tbody id="as-tbody">
-            <tr class="placeholder"><td colspan="8">暂无 Arcset</td></tr>
+            <tr class="placeholder"><td colspan="9">暂无 Arcset</td></tr>
           </tbody>
         </table>
       </div>

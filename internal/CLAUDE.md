@@ -12,17 +12,20 @@ dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_
 | 包 | 存储 | 说明 |
 |----|--------|------|
 | `dataset` | dataset SQLite：`t_dataset`、`t_file`、`t_shard`(DATA)、`t_segment` | 不可变文件集合，`CreateFromDir` 扫描目录创建 |
+| `datasetops` | dataset SQLite | CLI/API 共享的 create、mark-built、make-shards、scan |
 | `arcset` | PG：`t_arcset`、`t_dataset_ref`、`r_arcset_dataset_ref`、`t_shard` | 多 dataset 的聚合容器，`GenerateSegments` 切分为 `SegmentDesc` |
+| `arcsetops` | PG + dataset SQLite | CLI/API 共享的 create、append、expand |
 | `shard` | dataset SQLite + PG | dataset 层构建 DATA shard；arcset 层管理 DATA/EC/PAD 布局 |
 | `builddata` | dataset SQLite + PG | 排序 shard、placement、PAD 复用、移动文件 |
 | `makeec` | PG + 文件 | 按 stripe 生成 EC/PAD |
 | `recoverec` | PG + 文件 | 流式恢复 DATA/EC |
 | `validate` | PG + 文件 | data/ec/all 校验 |
 | `export` | PG | 生成 arcset.json |
+| `api` | dataset SQLite + PG | REST handler；不直接操作旧全局 SQLite |
 
 依赖方向：`shard` → `arcset`（使用 `SegmentDesc`），`arcset` 直连 `t_file` 查询。
 
-当前实现：`dataset` 包有 `DatasetStore` 操作每个 dataset 的 SQLite；arcset 层（`t_dataset_ref`、`t_arcset`、`r_arcset_dataset_ref`、`t_shard`、`t_fs_mount`）走 `arcset.PGStore`。无跨库外键，用 `dataset_uid` + `seq` 逻辑关联。旧的 `SQLiteStore` / `OpenSQLite` 只保留给未迁移命令。
+当前实现：`dataset` 包有 `DatasetStore` 操作每个 dataset 的 SQLite；arcset 层（`t_dataset_ref`、`t_arcset`、`r_arcset_dataset_ref`、`t_shard`、`t_fs_mount`）走 `arcset.PGStore`。CLI 与 API 共享 `datasetops` / `arcsetops`，避免重复业务逻辑。无跨库外键，用 `dataset_uid` + `seq` 逻辑关联。旧的 `SQLiteStore` / `OpenSQLite` 只保留给 `shard validate` 的未迁移 bin 路径。
 
 ## 包约定
 

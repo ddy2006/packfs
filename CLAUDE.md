@@ -9,21 +9,24 @@ go build ./...                  # 全量编译
 go build -o packfs ./cmd/cli    # 编译 CLI 二进制
 go test ./internal/...          # 全部测试
 go test -v ./internal/dataset/  # 单包测试
+PACKFS_TEST_PG_URL=postgres://... go test ./internal/...  # 含 PG 集成测试
 ```
+
+PG 集成测试使用临时 schema（`internal/pgtest`），未设置 `PACKFS_TEST_PG_URL` 时自动跳过；不会污染 public schema。
 
 没有 Makefile（除 `build/postgres/Makefile` 用于 Docker 镜像外）。
 
 ## WebUI
 
 ```sh
-packfs serve --addr=:8080       # 启动管理面板，WebUI 编译进二进制
+packfs serve --addr=:8080 --db-dir=/data/packfs/datasets  # 启动管理面板
 # 浏览器打开 http://localhost:8080
 ```
 
-- REST API 仍在 `internal/api/handler.go`，目前还是旧单 SQLite 实现，待迁移到 dataset SQLite + PG。
-- 前端在 `webui/`，编译时通过 `embed.go` 的 `//go:embed all:webui` 嵌入
-- `cmd/cli/webui/serve.go`：serve 命令 + 路由注册
-- CLI 核心链路已切到新存储；WebUI/API 尚未切完，不能假设与 CLI 数据一致。
+- REST API 在 `internal/api/`（`handler.go` 路由/helpers，`dataset.go`、`arcset.go`、`shard.go`、`fs.go` 等端点）；dataset 端点读 `--db-dir` 下的 SQLite，arcset 端点读 PG。
+- PostgreSQL 通过 `PACKFS_PG_URL` 配置；未配置时 dataset 功能可用，arcset 端点返回 503。
+- 前端在 `webui/`，编译时通过 `embed.go` 的 `//go:embed all:webui` 嵌入。
+- `cmd/cli/webui/serve.go`：serve 命令 + 路由注册；`--db-dir` 缺省 `$PACKFS_DATASET_DB_DIR` 或 `~/data/packfs/datasets`。
 - 工作流管道末端为“移交下游存储”，不展示介质/磁带状态。
 
 ## 项目概述
@@ -48,7 +51,7 @@ dataset SQLite ──dataset_uid──> PG t_dataset_ref ──r_arcset_dataset_
 | `cmd/cli/` | CLI 适配层 + cobra 命令 | `cmd/cli/README.md`、`cmd/cli/CLAUDE.md` |
 | `docs/` | 设计文档 + TODO | `docs/design.md`、`docs/design/`、`docs/todo.md` |
 | `webui/` | 前端管理面板（真实 API 驱动） | `webui/README.md` |
-| `internal/api/` | REST handler（旧单 SQLite，待迁移） | 本文件 |
+| `internal/api/` | REST handler（dataset SQLite + PG） | 本文件 |
 | `internal/fuse/` | 只读 FUSE 文件系统（hanwen/go-fuse/v2） | 本文件 |
 | `internal/simulate/` | 仿真数据生成（crypto/rand） | 本文件 |
 | `cmd/cli/webui/` | `packfs serve` 命令 | 本文件 |

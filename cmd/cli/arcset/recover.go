@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ddy2006/packfs/internal/arcsetops"
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/ec"
 	"github.com/ddy2006/packfs/internal/recoverec"
@@ -28,7 +29,7 @@ func recoverCmd() *cobra.Command {
 			}
 			target, _ := cmd.Flags().GetString("target")
 			chunkStr, _ := cmd.Flags().GetString("ec-chunk-size")
-			chunk, err := parseBytes(chunkStr)
+			chunk, err := arcsetops.ParseBytes(chunkStr)
 			if err != nil {
 				return errors.NewUsage(fmt.Sprintf("invalid --ec-chunk-size: %v", err))
 			}

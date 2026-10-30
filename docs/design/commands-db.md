@@ -4,11 +4,12 @@
 > dataset 元数据在每 dataset 一个 SQLite；arcset 元数据在全局 PostgreSQL。不引入 pipeline/task 表。
 > 旧库不兼容；dataset SQLite schema 与 PG schema 分别重建。
 
-## 实现状态（2026-10-29）
+## 实现状态（2026-10-30）
 
-- 已实现：`arcset create/append/build-data/make-ec/validate/recover/export/list`、`dataset create/mark-built/unpack`、新的 `shard make`（`# dataset_db`）。
-- 待实现：`arcset show/expand`、`--ec-parallel`、API/WebUI；`shard make-ec/recover` 和 `dataset list` 仍是旧路径。
-- 当前 `arcset make-ec` 支持 `--ec-chunk-size`、`--group`、`--seq`；`arcset validate` 暂不支持 `--source-root`，`arcset recover` 暂不支持 `--group/--source-root`。
+- 已实现：`arcset create/append/build-data/make-ec/validate/expand/recover/export/list/show`、`dataset create/mark-built/unpack/list`、新的 `shard make`（`# dataset_db`）。
+- API/WebUI 已迁移到 dataset SQLite + PG；端点见 [api-webui.md](api-webui.md)。
+- 已移除：`dataset validate/finalize`、`arcset rebuild`、`shard make-ec/recover`。
+- 当前 `arcset make-ec` 支持 `--ec-chunk-size`、`--ec-parallel`、`--group`、`--seq`；`arcset validate` 暂不支持 `--source-root`，`arcset recover` 暂不支持 `--group/--source-root`。
 
 ## 1. 命令总览
 
@@ -19,16 +20,17 @@
 | `arcset build-data` | 排序 data shard、分配 partition/stripe、移动文件并写 DB |
 | `arcset make-ec` | 按 stripe 生成/重算 EC + PAD；支持 `--group/--seq` |
 | `arcset validate` | 数据阶段 / EC 阶段 / 全量校验，更新 health |
-| `arcset expand` | 显式增加 group_count；无空间时由人工执行（待实现） |
+| `arcset expand` | 显式增加 group_count；无空间时由人工执行 |
 | `arcset recover` | 按 stripe 恢复 data / all |
 | `arcset export` | 显式导出 `arcset.json` |
 | `arcset list` | 查询 status/build_phase/health/parity_degraded、容量、shard 统计 |
-| `arcset show` | 单 arcset 详情（待实现） |
+| `arcset show` | 单 arcset 详情、dataset、partition 使用量、stripe 完成度 |
 | `dataset create` | 创建独立 dataset SQLite，构建 DATA shard，增加 shard 排序属性 |
 | `dataset mark-built` | 校验 DATA shard 并置 `built`；用于 `--gen-only` + 外部 `shard make` |
-| `shard make-ec` | 旧低层路径，待迁移 |
+| `dataset list` | 扫描 dataset 目录，列出 UID/名称/状态/文件数/shard 数 |
 
-`arcset rebuild` 暂不纳入首版：改 EC 参数需要全量重排，避免与 append/expand 冲突；后续单独设计。
+`arcset rebuild` 已从命令树移除：改 EC 参数需要全量重排，避免与 append/expand 冲突；后续单独设计。
+旧 `shard make-ec` / `shard recover` 已移除，统一使用 `arcset make-ec` / `arcset recover`。
 
 跨 arcset 迁移（dataset 从一个 arcset 移到另一个 arcset，含 EC 重建）暂不纳入首版；后续有需求再单独设计。
 
@@ -114,7 +116,7 @@ packfs arcset build-data --id=1 [--dataset-uid=<uuid>]
   4. 依次填入 stripe：`pos=0..k-1`，`partition` 按 layout 计算。
   5. 每个 shard 按实际大小检查目标 partition 的 `used_capacity`；放不下直接报错，不自动扩容。
   6. 移动 shard 到 arcset 的 partition 目录，按 `<seq>D-<dataset_key>-<原名>` 命名；写入 PG `t_shard` 行（DATA）。
-  7. `m>0` 时，若目标位置已有 PAD，直接把 PAD 行更新为 DATA，并删除该 stripe 的 EC 行、置 `parity_degraded=1`；后续 make-ec 重算该 stripe。PAD 复用按 `group_no, stripe_seq, pos` 最早优先。`m=0` 时无 PAD，直接填充未满条带。
+  7. `m>0` 时，若目标位置已有 PAD，直接把 PAD 行更新为 DATA，并删除该 stripe 的 EC 行、置 `parity_degraded=1`；后续 make-ec 重算该 stripe。PAD 复用按 `group_no, stripe_seq, pos` 最早优先。`m=0` 时无 PAD，直接填充未满条带；`m>0` 在无 PAD 可复用时同样先填充未满条带的空 DATA 位置，再新建条带。
 - 全部 DATA shard 写入 PG 后，该 dataset 的 build-data 完成（不记录额外 relation 状态）。
 - 崩溃重试：目标路径确定；已存在的目标文件按 checksum 校验，已存在的行复用，缺失的行补写。
 - 输出 `{"built":N}`。
@@ -122,8 +124,10 @@ packfs arcset build-data --id=1 [--dataset-uid=<uuid>]
 ### 2.4 `arcset make-ec`
 
 ```sh
-packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB] [--group=0] [--seq=3]
+packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB] [--ec-parallel=1] [--group=0] [--seq=3]
 ```
+
+- `--ec-parallel`：并行编码的 stripe 数，缺省 1；只影响同一批 stripe 的调度，不改变幂等语义。
 
 - 要求 `status=building`、`build_phase=data` 或 `ec`、`health=ok`，且所有已注册 dataset 的 DATA shard 已写入 PG。
 - `m=0`：不生成 EC/PAD，也不进入 `build_phase=ec`；校验 DATA shard 后置 `status=completed`、`build_phase=none`、`health=ok`、`parity_degraded=0`。
@@ -136,7 +140,7 @@ packfs arcset make-ec --id=1 [--ec-chunk-size=8MiB] [--group=0] [--seq=3]
   4. 写/更新 PG `t_shard`（EC/PAD：`dataset_ref` 为空）。
   5. 使用 [ec-streaming.md](ec-streaming.md) 的流式 `VerifyStripe` 校验 stripe。
 - 全部 stripe 完成并全量校验通过后：`status=completed`、`build_phase=none`、`health=ok`、`parity_degraded=0`。
-- `arcset make-ec --group/--seq` 只处理一个 stripe；不指定时处理全部 stripe。旧 `shard make-ec` 尚未迁移到新路径。`m=0` 时不做 EC。
+- `arcset make-ec --group/--seq` 只处理一个 stripe；不指定时处理全部 stripe。`m=0` 时不做 EC。
 
 ### 2.5 `arcset validate`
 
@@ -222,6 +226,17 @@ packfs dataset mark-built --dataset-db=/data/datasets/<uid>.db
 - 写入 `metadata.shard_count`，置 `t_dataset.status=built`；不复制 SQLite、不访问 PG。
 - 已 `built` 的 dataset 重复执行幂等。
 - 输出 `{"dataset_uid":"...","status":"built","shard_count":N}`。
+
+### 2.12 `dataset list`
+
+```sh
+packfs dataset list [--db-dir=/data/datasets] [--name=<substring>] [--status=building|built]
+```
+
+- 扫描 `--db-dir` 下的 `*.db`，逐个以只读方式打开 dataset SQLite；不访问 PG。
+- `--db-dir` 缺省同 `dataset create`：`$PACKFS_DATASET_DB_DIR`，未设置时 `~/data/packfs/datasets`。
+- 输出 `UID`、`NAME`、`STATUS`、`FILES`、`BYTES`、`SHARDS`、`SQLITE_PATH`，按名称排序。
+- 目录中非法 SQLite 或非 dataset 文件直接报错，不静默跳过。
 
 ## 3. DB 字段
 
@@ -325,11 +340,11 @@ metadata（`t_arcset.metadata`）：
 12. arcset export（只导出 JSON）。
 13. arcset recover（checksum 不变，只更新 PG）。
 14. FUSE：dataset 挂载限制、arcset 跨库挂载、PG `t_fs_mount`。
-15. API/WebUI 与测试。
+15. API/WebUI（已完成）与自动化测试（待补）。
 
 ## 6. 待定
 
 - PG 的部署、备份、高可用与连接配置。
-- `arcset rebuild`（修改 EC k+m）是否保留；首版不实现。
+- `arcset rebuild`（修改 EC k+m）后续是否重新引入；当前已从命令树移除。
 - `arcset delete` 的级联范围（PG 与 arcset 目录）。
 - `t_arcset.name` 唯一约束是否需要兼容同名旧数据（新库无此问题）。

@@ -5,7 +5,7 @@
 - 已实现 `fs mount --dataset-db` / `--arcset-id`、`fs list`、`fs umount`；挂载记录写 PG `t_fs_mount`。
 - dataset 索引读独立 SQLite；arcset 索引按 PG DATA shard 的 `file_path` 跨库拼路径，根目录为 `<dataset_key>/`。
 - 物理 shard 缺失时读取返回 `ENOENT`。
-- `fs fsck` 仍是未实现桩；FUSE 实际 mount 尚未做运行验证。
+- `fs fsck` 仍是未实现桩；索引构建已有单元测试。2026-10-30 在 macOS 14 + osxfuse（2019）环境尝试实际挂载，go-fuse 在 `getConnection` 阻塞，未完成运行验证。
 - 旧 `fs mount --dataset-id` 和本地状态库路径已废弃。
 - 支持矩阵：bin 无压缩 / `segment:zstd` / `segment:xz` 可随机读；shard 级 `zstd`/`xz` 需全量解压；`zstd_seekable` 未实现。
 

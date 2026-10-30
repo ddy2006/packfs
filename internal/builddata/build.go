@@ -117,11 +117,11 @@ func buildDataset(ctx context.Context, store *arcset.PGStore, a *arcset.Arcset,
 		if state.hasData(rel.DatasetRef, sh.Seq) {
 			continue
 		}
-		row, reusedEC, err := state.place(sh, rel, ds, shardRoot)
+		row, invalidatedEC, err := state.place(sh, rel, ds, shardRoot)
 		if err != nil {
 			return placed, err
 		}
-		if reusedEC {
+		if invalidatedEC {
 			if err := store.DeleteECShards(ctx, int64(a.ID), *row.GroupNo, *row.StripeSeq); err != nil {
 				return placed, err
 			}
@@ -252,6 +252,7 @@ func (s *placementState) place(sh *shard.Shard, rel arcset.RelationDatasetRow,
 	var row *arcset.ShardRow
 	var group, stripe, pos, partition int
 	var usePad bool
+	var invalidatedEC bool
 
 	if s.m > 0 {
 		for i, pad := range s.padRows {
@@ -279,8 +280,9 @@ func (s *placementState) place(sh *shard.Shard, rel arcset.RelationDatasetRow,
 		row = &arcset.ShardRow{ArcsetID: int64(s.a.ID)}
 	}
 
-	if usePad {
-		// Reusing a PAD invalidates the stripe's EC shards.
+	// Filling a PAD or an empty position in an existing stripe invalidates
+	// that stripe's EC shards; make-ec must recompute them.
+	if usePad || stripe < s.nextSeq[group] {
 		for key, old := range s.rows {
 			if old.Type != "EC" || key.group != group || key.stripe != stripe {
 				continue
@@ -289,8 +291,11 @@ func (s *placementState) place(sh *shard.Shard, rel arcset.RelationDatasetRow,
 				s.used[*old.Partition] -= old.FileSize
 			}
 			delete(s.rows, key)
+			invalidatedEC = true
 		}
-		s.parityDegraded = true
+		if invalidatedEC {
+			s.parityDegraded = true
+		}
 	}
 
 	origName := filepath.Base(sh.FilePath)
@@ -316,22 +321,20 @@ func (s *placementState) place(sh *shard.Shard, rel arcset.RelationDatasetRow,
 	row.Type = "DATA"
 	row.SHA256 = stringPtr(sh.Checksum)
 	row.Metadata = map[string]any{"data_bytes": sh.FileSize}
-	return row, usePad, nil
+	return row, invalidatedEC, nil
 }
 
 func (s *placementState) findNewSlot(size int64) (group, stripe, pos, partition int, ok bool) {
-	if s.m == 0 {
-		// Fill an existing incomplete stripe first.
-		for g := 0; g < s.groupCount; g++ {
-			for seq := 0; seq < s.nextSeq[g]; seq++ {
-				for p := 0; p < s.k; p++ {
-					if _, exists := s.rows[posKey{g, seq, p}]; exists {
-						continue
-					}
-					part := s.partition(g, p, seq)
-					if s.capacity-s.used[part] >= size {
-						return g, seq, p, part, true
-					}
+	// Fill an existing incomplete stripe first, for both m=0 and m>0.
+	for g := 0; g < s.groupCount; g++ {
+		for seq := 0; seq < s.nextSeq[g]; seq++ {
+			for p := 0; p < s.k; p++ {
+				if _, exists := s.rows[posKey{g, seq, p}]; exists {
+					continue
+				}
+				part := s.partition(g, p, seq)
+				if s.capacity-s.used[part] >= size {
+					return g, seq, p, part, true
 				}
 			}
 		}

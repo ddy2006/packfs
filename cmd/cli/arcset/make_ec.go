@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ddy2006/packfs/internal/arcsetops"
 	"github.com/ddy2006/packfs/internal/db"
 	"github.com/ddy2006/packfs/internal/ec"
 	"github.com/ddy2006/packfs/internal/makeec"
@@ -22,7 +23,7 @@ func makeECCmd() *cobra.Command {
 				return errors.NewUsage("--id is required")
 			}
 			chunkStr, _ := cmd.Flags().GetString("ec-chunk-size")
-			chunk, err := parseBytes(chunkStr)
+			chunk, err := arcsetops.ParseBytes(chunkStr)
 			if err != nil {
 				return errors.NewUsage(fmt.Sprintf("invalid --ec-chunk-size: %v", err))
 			}
@@ -31,6 +32,10 @@ func makeECCmd() *cobra.Command {
 			}
 			group, _ := cmd.Flags().GetInt("group")
 			stripe, _ := cmd.Flags().GetInt("seq")
+			parallel, _ := cmd.Flags().GetInt("ec-parallel")
+			if parallel < 1 {
+				return errors.NewUsage("--ec-parallel must be positive")
+			}
 			var groupPtr, stripePtr *int
 			if group >= 0 {
 				groupPtr = &group
@@ -49,6 +54,7 @@ func makeECCmd() *cobra.Command {
 				ChunkSize: int(chunk),
 				Group:     groupPtr,
 				Stripe:    stripePtr,
+				Parallel:  parallel,
 			}); err != nil {
 				return errors.WrapE(err, "make-ec")
 			}
@@ -60,6 +66,7 @@ func makeECCmd() *cobra.Command {
 	cmd.Flags().String("ec-chunk-size", "8MiB", "EC chunk size (1MiB..64MiB)")
 	cmd.Flags().Int("group", -1, "only process one partition group")
 	cmd.Flags().Int("seq", -1, "only process one stripe seq")
+	cmd.Flags().Int("ec-parallel", 1, "number of stripes to encode in parallel")
 	_ = ec.DefaultChunkSize
 	return cmd
 }
